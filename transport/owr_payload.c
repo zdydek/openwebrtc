@@ -300,8 +300,14 @@ static void owr_payload_init(OwrPayload *payload)
 /* Private methods */
 
 
+#if TARGET_RPI
+static const gchar *OwrCodecTypeEncoderElementName[] = {"none", "mulawenc", "alawenc", "opusenc", "omxh264enc", "omxvp8enc"};
+static const gchar *OwrCodecTypeDecoderElementName[] = {"none", "mulawdec", "alawdec", "opusdec", "omxh264dec", "omxvp8dec"};
+#else
 static const gchar *OwrCodecTypeEncoderElementName[] = {"none", "mulawenc", "alawenc", "opusenc", "openh264enc", "vp8enc"};
 static const gchar *OwrCodecTypeDecoderElementName[] = {"none", "mulawdec", "alawdec", "opusdec", "openh264dec", "vp8dec"};
+#endif
+
 static const gchar *OwrCodecTypeParserElementName[] = {"none", "none", "none", "none", "h264parse", "none"};
 static const gchar *OwrCodecTypePayElementName[] = {"none", "rtppcmupay", "rtppcmapay", "rtpopuspay", "rtph264pay", "rtpvp8pay"};
 static const gchar *OwrCodecTypeDepayElementName[] = {"none", "rtppcmudepay", "rtppcmadepay", "rtpopusdepay", "rtph264depay", "rtpvp8depay"};
@@ -415,7 +421,7 @@ GstElement * _owr_payload_create_encoder(OwrPayload *payload)
 #endif
                 "max-keyframe-interval", G_MAXINT,
                 NULL);
-        } else {
+        } else if (strcmp(factory_name, "omxh264enc")) {
             /* Assume bits/s instead of kbit/s */
             g_object_bind_property(payload, "bitrate", encoder, "bitrate", G_BINDING_SYNC_CREATE);
         }

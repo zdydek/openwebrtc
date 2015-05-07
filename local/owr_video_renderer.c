@@ -35,12 +35,14 @@
 #include "owr_video_renderer.h"
 
 #include "owr_media_renderer_private.h"
+#include "owr_media_source_private.h"
 #include "owr_private.h"
 #include "owr_utils.h"
 #include "owr_video_renderer_private.h"
 #include "owr_window_registry.h"
 #include "owr_window_registry_private.h"
 
+#include <gst/video/colorbalance.h>
 #include <gst/video/videooverlay.h>
 
 #include <string.h>
@@ -261,28 +263,75 @@ OwrVideoRenderer *owr_video_renderer_new(const gchar *tag)
 static void renderer_disabled(OwrMediaRenderer *renderer, GParamSpec *pspec, GstElement *balance)
 {
     gboolean disabled = FALSE;
+    GstColorBalance* color_balance = NULL;
+    GstElement* balance_element = NULL;
 
     g_return_if_fail(OWR_IS_MEDIA_RENDERER(renderer));
     g_return_if_fail(G_IS_PARAM_SPEC(pspec) || !pspec);
-    g_return_if_fail(GST_IS_ELEMENT(balance));
+
+    if (balance && GST_IS_COLOR_BALANCE(balance)) {
+        color_balance = GST_COLOR_BALANCE(balance);
+    } else {
+        OwrMediaSource* media_source = _owr_media_renderer_get_source(renderer);
+        GstElement* src_bin = _owr_media_source_get_source_bin(media_source);
+        balance_element = gst_bin_get_by_interface(GST_BIN(src_bin), GST_TYPE_COLOR_BALANCE);
+        if (balance_element)
+            color_balance = GST_COLOR_BALANCE(balance_element);
+    }
+
+    g_return_if_fail(GST_IS_COLOR_BALANCE(color_balance));
 
     g_object_get(renderer, "disabled", &disabled, NULL);
-    g_object_set(balance, "saturation", (gdouble)!disabled, "brightness", (gdouble)-disabled, NULL);
+
+    const GList* controls = gst_color_balance_list_channels(color_balance);
+    gint index = 0;
+    for (const GList* item = controls; item != NULL; item = item->next, ++index) {
+        GstColorBalanceChannel* channel = item->data;
+        gint current_value = gst_color_balance_get_value(color_balance, channel);
+        gint new_value = current_value;
+        if (g_str_equal(channel->label, "SATURATION") || g_str_equal(channel->label, "BRIGHTNESS"))
+            new_value = disabled ? channel->min_value : ((channel->min_value + channel->max_value) / 2);
+        gst_color_balance_set_value(color_balance, channel, new_value);
+    }
+
+    gst_object_unref(balance_element);
 }
 
 static void update_flip_method(OwrMediaRenderer *renderer, GParamSpec *pspec, GstElement *flip)
 {
     guint rotation = 0;
     gboolean mirror = FALSE;
-    gint flip_method;
 
     g_return_if_fail(OWR_IS_MEDIA_RENDERER(renderer));
     g_return_if_fail(G_IS_PARAM_SPEC(pspec) || !pspec);
-    g_return_if_fail(GST_IS_ELEMENT(flip));
 
     g_object_get(renderer, "rotation", &rotation, "mirror", &mirror, NULL);
-    flip_method = _owr_rotation_and_mirror_to_video_flip_method(rotation, mirror);
-    g_object_set(flip, "method", flip_method, NULL);
+
+    if (flip) {
+        gint flip_method = _owr_rotation_and_mirror_to_video_flip_method(rotation, mirror);
+        g_object_set(flip, "method", flip_method, NULL);
+    } else {
+#if TARGET_RPI
+        OwrMediaSource* media_source = _owr_media_renderer_get_source(renderer);
+        GstElement* src_bin = _owr_media_source_get_source_bin(media_source);
+        GstElement* src_element = gst_bin_get_by_name(GST_BIN(src_bin), "video-source");
+        gint rotation_angle = rotation * 90;
+        gboolean hflip = FALSE;
+        gboolean vflip = FALSE;
+
+        if (mirror) {
+            if (rotation == 0)
+                vflip = TRUE;
+            else if (rotation == 1)
+                vflip = hflip = TRUE;
+            else if (rotation == 2)
+                hflip = TRUE;
+        }
+
+        g_object_set(src_element, "rotation", rotation_angle, "hflip", hflip, "vflip", vflip, NULL);
+        gst_object_unref(src_element);
+#endif
+    }
 }
 
 static GstElement *owr_video_renderer_get_element(OwrMediaRenderer *renderer, guintptr window_handle)
@@ -290,7 +339,10 @@ static GstElement *owr_video_renderer_get_element(OwrMediaRenderer *renderer, gu
     OwrVideoRenderer *video_renderer;
     OwrVideoRendererPrivate *priv;
     GstElement *renderer_bin;
-    GstElement *upload, *convert, *balance, *flip, *sink;
+#if !TARGET_RPI
+    GstElement *balance, *flip;
+#endif
+    GstElement *upload, *convert, *sink;
     GstPad *ghostpad, *sinkpad;
     gchar *bin_name;
 
@@ -304,8 +356,8 @@ static GstElement *owr_video_renderer_get_element(OwrMediaRenderer *renderer, gu
 
     upload = gst_element_factory_make("glupload", "video-renderer-upload");
     convert = gst_element_factory_make("glcolorconvert", "video-renderer-convert");
-
-    balance = gst_element_factory_make("glcolorbalance", "video-renderer-balance");
+#if !TARGET_RPI
+    balance = gst_element_factory_make("glvideobalance", "video-renderer-balance");
     g_signal_connect_object(renderer, "notify::disabled", G_CALLBACK(renderer_disabled),
         balance, 0);
     renderer_disabled(renderer, NULL, balance);
@@ -315,8 +367,15 @@ static GstElement *owr_video_renderer_get_element(OwrMediaRenderer *renderer, gu
     g_signal_connect_object(renderer, "notify::rotation", G_CALLBACK(update_flip_method), flip, 0);
     g_signal_connect_object(renderer, "notify::mirror", G_CALLBACK(update_flip_method), flip, 0);
     update_flip_method(renderer, NULL, flip);
+#else
+    g_signal_connect_object(renderer, "notify::disabled", G_CALLBACK(renderer_disabled),
+        NULL, 0);
+    g_signal_connect_object(renderer, "notify::rotation", G_CALLBACK(update_flip_method), NULL, 0);
+    g_signal_connect_object(renderer, "notify::mirror", G_CALLBACK(update_flip_method), NULL, 0);
+#endif
 
     sink = OWR_MEDIA_RENDERER_GET_CLASS(renderer)->get_sink(renderer);
+    g_object_set(sink, "sync", FALSE, NULL);
     g_assert(sink);
     g_object_set(sink, "enable-last-sample", FALSE, NULL);
     if (priv->tag) {
@@ -330,13 +389,17 @@ static GstElement *owr_video_renderer_get_element(OwrMediaRenderer *renderer, gu
             g_object_unref(sink_element);
     }
 
-    gst_bin_add_many(GST_BIN(renderer_bin), upload, convert, balance, flip, sink, NULL);
-
+    gst_bin_add_many(GST_BIN(renderer_bin), upload, convert, sink, NULL);
+#if TARGET_RPI
+    LINK_ELEMENTS(upload, convert);
+    LINK_ELEMENTS(convert, sink);
+#else
+    gst_bin_add_many(GST_BIN(renderer_bin), balance, flip, NULL);
     LINK_ELEMENTS(upload, convert);
     LINK_ELEMENTS(convert, balance);
     LINK_ELEMENTS(balance, flip);
     LINK_ELEMENTS(flip, sink);
-
+#endif
     sinkpad = gst_element_get_static_pad(upload, "sink");
     g_assert(sinkpad);
     ghostpad = gst_ghost_pad_new("sink", sinkpad);
@@ -374,7 +437,11 @@ static GstCaps *owr_video_renderer_get_caps(OwrMediaRenderer *renderer)
         "max-framerate", &max_framerate,
         NULL);
 
+#if TARGET_RPI
+    caps = gst_caps_new_empty_simple("video/x-h264");
+#else
     caps = gst_caps_new_empty_simple("video/x-raw");
+#endif
     gst_caps_set_features(caps, 0, gst_caps_features_new_any());
     if (width > 0)
         gst_caps_set_simple(caps, "width", G_TYPE_INT, width, NULL);
@@ -387,6 +454,12 @@ static GstCaps *owr_video_renderer_get_caps(OwrMediaRenderer *renderer)
         gst_caps_set_simple(caps, "framerate", GST_TYPE_FRACTION, fps_n, fps_d, NULL);
     }
 
+#if TARGET_RPI
+    gst_caps_set_simple(caps, "stream-format", G_TYPE_STRING, "byte-stream",
+                        "alignment", G_TYPE_STRING, "au",
+                        "profile", G_TYPE_STRING, "baseline",
+                        NULL);
+#endif
     return caps;
 }
 

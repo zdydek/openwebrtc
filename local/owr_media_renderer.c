@@ -469,6 +469,11 @@ void _owr_media_renderer_set_sink(OwrMediaRenderer *renderer, gpointer sink_ptr)
     g_mutex_unlock(&priv->media_renderer_lock);
 }
 
+OwrMediaSource* _owr_media_renderer_get_source(OwrMediaRenderer *renderer)
+{
+    return renderer->priv->source;
+}
+
 gchar * owr_media_renderer_get_dot_data(OwrMediaRenderer *renderer)
 {
     g_return_val_if_fail(OWR_IS_MEDIA_RENDERER(renderer), NULL);

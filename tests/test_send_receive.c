@@ -236,8 +236,8 @@ static void got_sources(GList *sources, gpointer user_data)
 
             owr_bus_add_message_origin(bus, OWR_MESSAGE_ORIGIN(source));
 
-            payload = owr_video_payload_new(OWR_CODEC_TYPE_VP8, 103, 90000, TRUE, FALSE);
-            g_object_set(payload, "width", 640, "height", 480, "framerate", 30.0, NULL);
+            payload = owr_video_payload_new(OWR_CODEC_TYPE_H264, 103, 90000, TRUE, FALSE);
+            g_object_set(payload, "width", 1920, "height", 1080, "framerate", 30.0, NULL);
             g_object_set(payload, "rtx-payload-type", 123, NULL);
             if (adaptation)
                 g_object_set(payload, "adaptation", TRUE, NULL);
@@ -249,15 +249,18 @@ static void got_sources(GList *sources, gpointer user_data)
             owr_transport_agent_add_session(recv_transport_agent, OWR_SESSION(recv_session_video));
             owr_transport_agent_add_session(send_transport_agent, OWR_SESSION(send_session_video));
 
+            if (!g_getenv("DISABLE_SELF_VIEW")) {
             g_print("Displaying self-view\n");
 
             renderer = owr_video_renderer_new(NULL);
             g_assert(renderer);
+
             owr_bus_add_message_origin(bus, OWR_MESSAGE_ORIGIN(renderer));
 
-            g_object_set(renderer, "width", 640, "height", 480, "max-framerate", 30.0, NULL);
+            g_object_set(renderer, "width", 1920, "height", 1080, "max-framerate", 30.0, NULL);
             owr_media_renderer_set_source(OWR_MEDIA_RENDERER(renderer), source);
             video_renderer = OWR_MEDIA_RENDERER(renderer);
+            }
             video_source = g_object_ref(source);
         } else if (!disable_audio && !have_audio && media_type == OWR_MEDIA_TYPE_AUDIO) {
             OwrPayload *payload;

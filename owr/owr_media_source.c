@@ -311,10 +311,13 @@ static GstElement *owr_media_source_request_source_default(OwrMediaSource *media
         }
     case OWR_MEDIA_TYPE_VIDEO:
         {
+#if !TARGET_RPI
         GstElement *videorate = NULL, *videoscale = NULL, *videoconvert;
         GstStructure *s;
+#endif
         GstCapsFeatures *features;
 
+#if !TARGET_RPI
         s = gst_caps_get_structure(caps, 0);
         if (gst_structure_has_field(s, "framerate")) {
             gint fps_n = 0, fps_d = 0;
@@ -328,42 +331,59 @@ static GstElement *owr_media_source_request_source_default(OwrMediaSource *media
             gst_structure_remove_field(s, "framerate");
             gst_bin_add(GST_BIN(source_bin), videorate);
         }
+#endif
+        g_printerr("Source caps: %s\n", gst_caps_to_string(caps));
         g_object_set(capsfilter, "caps", caps, NULL);
 
         features = gst_caps_get_features(caps, 0);
+        GstElement *glload;
         if (gst_caps_features_contains(features, GST_CAPS_FEATURE_MEMORY_GL_MEMORY)) {
-            GstElement *glupload;
-
-            CREATE_ELEMENT_WITH_ID(glupload, "glupload", "source-glupload", source_id);
-            CREATE_ELEMENT_WITH_ID(videoconvert, "glcolorconvert", "source-glcolorconvert", source_id);
+            CREATE_ELEMENT_WITH_ID(glload, "glupload", "source-glupload", source_id);
             gst_bin_add_many(GST_BIN(source_bin),
-                    queue_pre, glupload, videoconvert, capsfilter, queue_post, NULL);
+                    queue_pre, glload, capsfilter, queue_post, NULL);
 
+#if !TARGET_RPI
+            CREATE_ELEMENT_WITH_ID(videoconvert, "glcolorconvert", "source-glcolorconvert", source_id);
+            gst_bin_add(GST_BIN(source_bin), videoconvert);
+#endif
+
+#if TARGET_RPI
+            LINK_ELEMENTS(queue_pre, glload);
+#else
             if (videorate) {
                 LINK_ELEMENTS(queue_pre, videorate);
-                LINK_ELEMENTS(videorate, glupload);
+                LINK_ELEMENTS(videorate, glload);
             } else {
-                LINK_ELEMENTS(queue_pre, glupload);
+                LINK_ELEMENTS(queue_pre, glload);
             }
-            LINK_ELEMENTS(glupload, videoconvert);
+            LINK_ELEMENTS(glload, videoconvert);
+#endif
         } else {
-            GstElement *gldownload;
-
-            CREATE_ELEMENT_WITH_ID(gldownload, "gldownload", "source-gldownload", source_id);
+            CREATE_ELEMENT_WITH_ID(glload, "gldownload", "source-gldownload", source_id);
+            gst_bin_add_many(GST_BIN(source_bin),
+                    queue_pre, glload, capsfilter, queue_post, NULL);
+#if TARGET_RPI
+            LINK_ELEMENTS(queue_pre, glload);
+#else
             CREATE_ELEMENT_WITH_ID(videoscale,  "videoscale", "source-video-scale", source_id);
             CREATE_ELEMENT_WITH_ID(videoconvert, VIDEO_CONVERT, "source-video-convert", source_id);
             gst_bin_add_many(GST_BIN(source_bin),
-                    queue_pre, gldownload, videoscale, videoconvert, capsfilter, queue_post, NULL);
+                    videoscale, videoconvert, NULL);
             if (videorate) {
                 LINK_ELEMENTS(queue_pre, videorate);
-                LINK_ELEMENTS(videorate, gldownload);
+                LINK_ELEMENTS(videorate, glload);
             } else {
-                LINK_ELEMENTS(queue_pre, gldownload);
+                LINK_ELEMENTS(queue_pre, glload);
             }
-            LINK_ELEMENTS(gldownload, videoscale);
+            LINK_ELEMENTS(glload, videoscale);
             LINK_ELEMENTS(videoscale, videoconvert);
+#endif
         }
+#if TARGET_RPI
+        LINK_ELEMENTS(glload, capsfilter);
+#else
         LINK_ELEMENTS(videoconvert, capsfilter);
+#endif
         LINK_ELEMENTS(capsfilter, queue_post);
 
         break;

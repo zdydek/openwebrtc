@@ -2139,6 +2139,7 @@ static OwrSession * get_session(OwrTransportAgent *transport_agent, guint stream
     return s;
 }
 
+#if !TARGET_RPI
 static void update_flip_method(OwrPayload *payload, GParamSpec *pspec, GstElement *flip)
 {
     guint rotation = 0;
@@ -2153,6 +2154,7 @@ static void update_flip_method(OwrPayload *payload, GParamSpec *pspec, GstElemen
     flip_method = _owr_rotation_and_mirror_to_video_flip_method(rotation, mirror);
     g_object_set(flip, "method", flip_method, NULL);
 }
+#endif
 
 /* pad is transfer full */
 static void add_pads_to_bin_and_transport_bin(GstPad *pad, GstElement *bin, GstElement *transport_bin,
@@ -2183,7 +2185,10 @@ static void handle_new_send_payload(OwrTransportAgent *transport_agent, OwrMedia
     GstElement *send_input_bin = NULL;
     GstElement *encoder = NULL, *parser = NULL, *payloader = NULL,
         *rtp_capsfilter = NULL, *rtpbin = NULL;
-    GstCaps *caps = NULL, *rtp_caps = NULL;
+#if !TARGET_RPI
+    GstCaps *caps = NULL;
+#endif
+    GstCaps *rtp_caps = NULL;
     gchar *name = NULL;
     gboolean link_ok = TRUE, sync_ok = TRUE;
     GstPad *sink_pad = NULL, *rtp_sink_pad = NULL, *rtp_capsfilter_src_pad = NULL,
@@ -2260,12 +2265,13 @@ static void handle_new_send_payload(OwrTransportAgent *transport_agent, OwrMedia
     g_warn_if_fail(sync_ok);
 
     if (media_type == OWR_MEDIA_TYPE_VIDEO) {
-        GstElement *gldownload, *flip, *queue = NULL, *encoder_capsfilter;
-
+        GstElement *gldownload;
         name = g_strdup_printf("send-input-video-gldownload-%u", stream_id);
         gldownload = gst_element_factory_make("gldownload", name);
         g_free(name);
 
+#if !TARGET_RPI
+        GstElement *flip, *queue = NULL, *encoder_capsfilter;
         name = g_strdup_printf("send-input-video-flip-%u", stream_id);
         flip = gst_element_factory_make("videoflip", name);
         g_assert(flip);
@@ -2283,7 +2289,11 @@ static void handle_new_send_payload(OwrTransportAgent *transport_agent, OwrMedia
 
         encoder = _owr_payload_create_encoder(payload);
         parser = _owr_payload_create_parser(payload);
+#endif
         payloader = _owr_payload_create_payload_packetizer(payload);
+
+
+#if !TARGET_RPI
         g_warn_if_fail(payloader && encoder);
 
         encoder_sink_pad = gst_element_get_static_pad(encoder, "sink");
@@ -2297,12 +2307,17 @@ static void handle_new_send_payload(OwrTransportAgent *transport_agent, OwrMedia
         g_object_set(encoder_capsfilter, "caps", caps, NULL);
         gst_caps_unref(caps);
 
-        gst_bin_add_many(GST_BIN(send_input_bin), gldownload, flip, queue, encoder, encoder_capsfilter, payloader, NULL);
+        gst_bin_add_many(GST_BIN(send_input_bin), flip, queue, encoder, encoder_capsfilter, NULL);
+#endif
+        gst_bin_add_many(GST_BIN(send_input_bin), gldownload, payloader, NULL);
+
+#if !TARGET_RPI
         if (parser) {
             gst_bin_add(GST_BIN(send_input_bin), parser);
             link_ok &= gst_element_link_many(gldownload, flip, queue, encoder, parser, encoder_capsfilter, payloader, NULL);
         } else
             link_ok &= gst_element_link_many(gldownload, flip, queue, encoder, encoder_capsfilter, payloader, NULL);
+#endif
 
         link_ok &= gst_element_link_many(payloader, rtp_capsfilter, NULL);
 
@@ -2312,14 +2327,20 @@ static void handle_new_send_payload(OwrTransportAgent *transport_agent, OwrMedia
         sync_ok &= gst_element_sync_state_with_parent(payloader);
         if (parser)
             sync_ok &= gst_element_sync_state_with_parent(parser);
+#if !TARGET_RPI
         sync_ok &= gst_element_sync_state_with_parent(encoder_capsfilter);
         sync_ok &= gst_element_sync_state_with_parent(encoder);
         sync_ok &= gst_element_sync_state_with_parent(queue);
         sync_ok &= gst_element_sync_state_with_parent(flip);
         sync_ok &= gst_element_sync_state_with_parent(gldownload);
+#endif
 
         name = g_strdup_printf("video_sink_%u_%u", OWR_CODEC_TYPE_NONE, stream_id);
-        sink_pad = gst_element_get_static_pad(gldownload, "sink");
+#if !TARGET_RPI
+        sink_pad = gst_element_get_static_pad(flip, "sink");
+#else
+        sink_pad = gst_element_get_static_pad(payloader, "sink");
+#endif
         add_pads_to_bin_and_transport_bin(sink_pad, send_input_bin,
             transport_agent->priv->transport_bin, name);
         gst_object_unref(sink_pad);
@@ -2579,7 +2600,10 @@ static void setup_video_receive_elements(GstPad *new_pad, guint32 session_id, Ow
     GstPad *depay_sink_pad = NULL, *ghost_pad = NULL;
     gboolean sync_ok = TRUE;
     GstElement *receive_output_bin;
-    GstElement *rtpdepay, *videorepair1, *parser, *decoder;
+    GstElement *rtpdepay, *videorepair1, *parser;
+#if !TARGET_RPI
+    GstElement *decoder;
+#endif
     GstPadLinkReturn link_res;
     gboolean link_ok = TRUE;
     OwrCodecType codec_type;
@@ -2611,16 +2635,22 @@ static void setup_video_receive_elements(GstPad *new_pad, guint32 session_id, Ow
 
     g_object_get(payload, "codec-type", &codec_type, NULL);
     parser = _owr_payload_create_parser(payload);
+#if !TARGET_RPI
     decoder = _owr_payload_create_decoder(payload);
-
+    gst_bin_add(GST_BIN(receive_output_bin), decoder);
+#endif
     gst_bin_add_many(GST_BIN(receive_output_bin), rtpdepay,
-        videorepair1, decoder, /*decoded_tee,*/ NULL);
+        videorepair1, /*decoded_tee,*/ NULL);
     depay_sink_pad = gst_element_get_static_pad(rtpdepay, "sink");
     if (parser) {
         gst_bin_add(GST_BIN(receive_output_bin), parser);
-        link_ok &= gst_element_link_many(rtpdepay, parser, videorepair1, decoder, NULL);
+        link_ok &= gst_element_link_many(rtpdepay, parser, videorepair1, NULL);
     } else
-        link_ok &= gst_element_link_many(rtpdepay, videorepair1, decoder, NULL);
+        link_ok &= gst_element_link_many(rtpdepay, videorepair1, NULL);
+
+#if !TARGET_RPI
+    link_ok &= gst_element_link(videorepair1, decoder);
+#endif
 
     ghost_pad = ghost_pad_and_add_to_bin(depay_sink_pad, receive_output_bin, "sink");
     link_res = gst_pad_link(new_pad, ghost_pad);
@@ -2628,14 +2658,20 @@ static void setup_video_receive_elements(GstPad *new_pad, guint32 session_id, Ow
     ghost_pad = NULL;
     g_warn_if_fail(link_ok && (link_res == GST_PAD_LINK_OK));
 
+#if !TARGET_RPI
     sync_ok &= gst_element_sync_state_with_parent(decoder);
+#endif
     if (parser)
         sync_ok &= gst_element_sync_state_with_parent(parser);
     sync_ok &= gst_element_sync_state_with_parent(videorepair1);
     sync_ok &= gst_element_sync_state_with_parent(rtpdepay);
     g_warn_if_fail(sync_ok);
 
+#if !TARGET_RPI
     pad = gst_element_get_static_pad(decoder, "src");
+#else
+    pad = gst_element_get_static_pad(videorepair1, "src");
+#endif
     g_snprintf(name, OWR_OBJECT_NAME_LENGTH_MAX, "video_src_%u_%u", OWR_CODEC_TYPE_NONE,
         session_id);
     add_pads_to_bin_and_transport_bin(pad, receive_output_bin, transport_agent->priv->transport_bin, name);
