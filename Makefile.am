@@ -10,8 +10,6 @@ if OWR_GST
 SUBDIRS += gst
 endif
 
-SUBDIRS += docs
-
 if OWR_TESTS
 SUBDIRS += tests
 endif

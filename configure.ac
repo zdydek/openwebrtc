@@ -318,7 +318,4 @@ local/Makefile
 tests/Makefile
 bindings/Makefile
 bindings/java/Makefile
-docs/Makefile
-docs/reference/Makefile
-docs/reference/owr/Makefile
 ])
