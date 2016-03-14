@@ -561,21 +561,21 @@ static GstElement *owr_local_media_source_request_source(OwrMediaSource *media_s
             switch (source_type) {
             case OWR_SOURCE_TYPE_CAPTURE:
                 CREATE_ELEMENT(source, VIDEO_SRC, "video-source");
+#if !defined(TARGET_RPI) || !TARGET_RPI
                 if (priv->device_index > -1) {
 #if defined(__APPLE__) && !TARGET_IPHONE_SIMULATOR
                     g_object_set(source, "device-index", priv->device_index, NULL);
 #elif defined(__ANDROID__)
                     g_object_set(source, "cam-index", priv->device_index, NULL);
 #elif defined(__linux__)
-#if !defined(TARGET_RPI) || !TARGET_RPI
                     tmp = g_strdup_printf("/dev/video%d", priv->device_index);
                     g_object_set(source, "device", tmp, NULL);
                     g_free(tmp);
-#else
-                    g_object_set(source, "preview", FALSE, NULL);
-#endif
 #endif
                 }
+#else
+                g_object_set(source, "preview", FALSE, NULL);
+#endif
                 break;
             case OWR_SOURCE_TYPE_TEST: {
                 GstElement *src, *time;
