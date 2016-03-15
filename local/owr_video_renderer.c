@@ -339,7 +339,9 @@ static GstElement *owr_video_renderer_get_element(OwrMediaRenderer *renderer, gu
     OwrVideoRenderer *video_renderer;
     OwrVideoRendererPrivate *priv;
     GstElement *renderer_bin;
-#if !TARGET_RPI
+#if TARGET_RPI
+    GstElement *decoder;
+#else
     GstElement *balance, *flip, *convert;
 #endif
     GstElement *upload, *sink;
@@ -389,16 +391,22 @@ static GstElement *owr_video_renderer_get_element(OwrMediaRenderer *renderer, gu
     }
 
     gst_bin_add_many(GST_BIN(renderer_bin), upload, sink, NULL);
+
 #if TARGET_RPI
+    decoder = gst_element_factory_make("omxh264dec", "video-renderer-decoder");
+    gst_bin_add(GST_BIN(renderer_bin), decoder);
+    LINK_ELEMENTS(decoder, upload);
     LINK_ELEMENTS(upload, sink);
+    sinkpad = gst_element_get_static_pad(decoder, "sink");
 #else
     gst_bin_add_many(GST_BIN(renderer_bin), convert, balance, flip, NULL);
     LINK_ELEMENTS(upload, convert);
     LINK_ELEMENTS(convert, balance);
     LINK_ELEMENTS(balance, flip);
     LINK_ELEMENTS(flip, sink);
-#endif
     sinkpad = gst_element_get_static_pad(upload, "sink");
+#endif
+
     g_assert(sinkpad);
     ghostpad = gst_ghost_pad_new("sink", sinkpad);
     gst_pad_set_active(ghostpad, TRUE);
