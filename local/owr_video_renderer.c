@@ -340,9 +340,9 @@ static GstElement *owr_video_renderer_get_element(OwrMediaRenderer *renderer, gu
     OwrVideoRendererPrivate *priv;
     GstElement *renderer_bin;
 #if !TARGET_RPI
-    GstElement *balance, *flip;
+    GstElement *balance, *flip, *convert;
 #endif
-    GstElement *upload, *convert, *sink;
+    GstElement *upload, *sink;
     GstPad *ghostpad, *sinkpad;
     gchar *bin_name;
 
@@ -355,8 +355,8 @@ static GstElement *owr_video_renderer_get_element(OwrMediaRenderer *renderer, gu
     g_free(bin_name);
 
     upload = gst_element_factory_make("glupload", "video-renderer-upload");
-    convert = gst_element_factory_make("glcolorconvert", "video-renderer-convert");
 #if !TARGET_RPI
+    convert = gst_element_factory_make("glcolorconvert", "video-renderer-convert");
     balance = gst_element_factory_make("glcolorbalance", "video-renderer-balance");
     g_signal_connect_object(renderer, "notify::disabled", G_CALLBACK(renderer_disabled),
         balance, 0);
@@ -388,12 +388,11 @@ static GstElement *owr_video_renderer_get_element(OwrMediaRenderer *renderer, gu
             g_object_unref(sink_element);
     }
 
-    gst_bin_add_many(GST_BIN(renderer_bin), upload, convert, sink, NULL);
+    gst_bin_add_many(GST_BIN(renderer_bin), upload, sink, NULL);
 #if TARGET_RPI
-    LINK_ELEMENTS(upload, convert);
-    LINK_ELEMENTS(convert, sink);
+    LINK_ELEMENTS(upload, sink);
 #else
-    gst_bin_add_many(GST_BIN(renderer_bin), balance, flip, NULL);
+    gst_bin_add_many(GST_BIN(renderer_bin), convert, balance, flip, NULL);
     LINK_ELEMENTS(upload, convert);
     LINK_ELEMENTS(convert, balance);
     LINK_ELEMENTS(balance, flip);
