@@ -340,6 +340,7 @@ static GstElement *owr_video_renderer_get_element(OwrMediaRenderer *renderer, gu
     OwrVideoRendererPrivate *priv;
     GstElement *renderer_bin;
 #if TARGET_RPI
+    GstElement *parser;
     GstElement *decoder;
 #else
     GstElement *balance, *flip, *convert;
@@ -393,11 +394,13 @@ static GstElement *owr_video_renderer_get_element(OwrMediaRenderer *renderer, gu
     gst_bin_add_many(GST_BIN(renderer_bin), upload, sink, NULL);
 
 #if TARGET_RPI
+    parser = gst_element_factory_make("h264parse", "video-renderer-parser" );
     decoder = gst_element_factory_make("omxh264dec", "video-renderer-decoder");
-    gst_bin_add(GST_BIN(renderer_bin), decoder);
+    gst_bin_add_many(GST_BIN(renderer_bin), parser, decoder, NULL);
+    LINK_ELEMENTS(parser, decoder);
     LINK_ELEMENTS(decoder, upload);
     LINK_ELEMENTS(upload, sink);
-    sinkpad = gst_element_get_static_pad(decoder, "sink");
+    sinkpad = gst_element_get_static_pad(parser, "sink");
 #else
     gst_bin_add_many(GST_BIN(renderer_bin), convert, balance, flip, NULL);
     LINK_ELEMENTS(upload, convert);
