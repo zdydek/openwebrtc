@@ -49,6 +49,11 @@ static OwrMediaRenderer *audio_renderer = NULL, *video_renderer = NULL;
 
 gboolean dump_pipeline(gpointer user_data)
 {
+    if (!g_getenv("OWR_DEBUG_DUMP_DOT_DIR")) {
+        g_print("Not dumping pipelines because OWR_DEBUG_DUMP_DOT_DIR environment variable is empty.\n");
+        return FALSE;
+    }
+
     g_print("Dumping pipelines...");
 
     if (audio_source)
