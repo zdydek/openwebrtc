@@ -574,7 +574,7 @@ static GstElement *owr_local_media_source_request_source(OwrMediaSource *media_s
 #endif
                 }
 #else
-                g_object_set(source, "preview", FALSE, NULL);
+                g_object_set(source, "preview", FALSE, "fullscreen", FALSE, "inline-headers", TRUE, NULL);
 #endif
                 break;
             case OWR_SOURCE_TYPE_TEST: {
