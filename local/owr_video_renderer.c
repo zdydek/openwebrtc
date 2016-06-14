@@ -464,9 +464,8 @@ static GstCaps *owr_video_renderer_get_caps(OwrMediaRenderer *renderer)
     }
 
 #if TARGET_RPI
-    gst_caps_set_simple(caps, "stream-format", G_TYPE_STRING, "byte-stream",
+    gst_caps_set_simple(caps,
                         "alignment", G_TYPE_STRING, "au",
-                        "profile", G_TYPE_STRING, "baseline",
                         NULL);
 #endif
     return caps;
