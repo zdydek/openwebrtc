@@ -284,13 +284,10 @@ static GstElement *owr_media_source_request_source_default(OwrMediaSource *media
     g_free(bin_name);
 
     CREATE_ELEMENT_WITH_ID(queue_pre, "queue", "source-queue", source_id);
-    CREATE_ELEMENT_WITH_ID(capsfilter, "capsfilter", "source-output-capsfilter", source_id);
-    CREATE_ELEMENT_WITH_ID(queue_post, "queue", "source-output-queue", source_id);
 
     CREATE_ELEMENT_WITH_ID(sink_queue, "queue", "sink-queue", source_id);
 
-    gst_bin_add_many(GST_BIN(source_bin),
-                     queue_pre, capsfilter, queue_post, NULL);
+    gst_bin_add(GST_BIN(source_bin), queue_pre);
     g_object_get(media_source, "media-type", &media_type, NULL);
 
     switch (media_type) {
@@ -298,24 +295,31 @@ static GstElement *owr_media_source_request_source_default(OwrMediaSource *media
         {
         GstElement *audioresample, *audioconvert;
 
+        CREATE_ELEMENT_WITH_ID(capsfilter, "capsfilter", "source-output-capsfilter", source_id);
+        CREATE_ELEMENT_WITH_ID(queue_post, "queue", "source-output-queue", source_id);
         g_object_set(capsfilter, "caps", caps, NULL);
 
         CREATE_ELEMENT_WITH_ID(audioresample, "audioresample", "source-audio-resample", source_id);
         CREATE_ELEMENT_WITH_ID(audioconvert, "audioconvert", "source-audio-convert", source_id);
 
-        gst_bin_add_many(GST_BIN(source_bin),
-                         audioconvert, audioresample, NULL);
-        LINK_ELEMENTS(audioresample, capsfilter);
-        LINK_ELEMENTS(audioconvert, audioresample);
+        gst_bin_add_many(GST_BIN(source_bin), queue_pre, audioconvert, audioresample, capsfilter,
+                         queue_post, NULL);
         LINK_ELEMENTS(queue_pre, audioconvert);
+        LINK_ELEMENTS(audioconvert, audioresample);
+        LINK_ELEMENTS(audioresample, capsfilter);
+        LINK_ELEMENTS(capsfilter, queue_post);
+
+        srcpad = gst_element_get_static_pad(queue_post, "src");
 
         break;
         }
     case OWR_MEDIA_TYPE_VIDEO:
         {
-        g_object_set(capsfilter, "caps", caps, NULL);
 
 #if !TARGET_RPI
+        CREATE_ELEMENT_WITH_ID(capsfilter, "capsfilter", "source-output-capsfilter", source_id);
+        CREATE_ELEMENT_WITH_ID(queue_post, "queue", "source-output-queue", source_id);
+        g_object_set(capsfilter, "caps", caps, NULL);
         GstElement *videorate = NULL, *videoscale = NULL, *videoconvert;
         GstStructure *s;
         GstCapsFeatures *features;
@@ -365,8 +369,10 @@ static GstElement *owr_media_source_request_source_default(OwrMediaSource *media
             LINK_ELEMENTS(videoscale, videoconvert);
         }
         LINK_ELEMENTS(videoconvert, capsfilter);
+        LINK_ELEMENTS(capsfilter, queue_post);
+        srcpad = gst_element_get_static_pad(queue_post, "src");
 #else
-        LINK_ELEMENTS(queue_pre, capsfilter);
+        srcpad = gst_element_get_static_pad(queue_pre, "src");
 #endif
         break;
         }
@@ -375,7 +381,6 @@ static GstElement *owr_media_source_request_source_default(OwrMediaSource *media
         g_assert_not_reached();
         goto done;
     }
-    LINK_ELEMENTS(capsfilter, queue_post);
 
     source_name = g_strdup_printf("source-%u", source_id);
     source = g_object_new(OWR_TYPE_INTER_SRC, "name", source_name, NULL);
@@ -407,7 +412,6 @@ static GstElement *owr_media_source_request_source_default(OwrMediaSource *media
     LINK_ELEMENTS(tee, sink_bin);
 
     /* Start up our new bin and link it all */
-    srcpad = gst_element_get_static_pad(queue_post, "src");
     g_assert(srcpad);
 
     bin_pad = gst_ghost_pad_new("src", srcpad);
