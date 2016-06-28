@@ -15,7 +15,6 @@ AM_CPPFLAGS = \
 AM_CFLAGS = \
     -Wall \
     -Wextra \
-    -Werror \
     -Wno-parentheses-equality \
     $(DEBUG_CFLAGS)
 
