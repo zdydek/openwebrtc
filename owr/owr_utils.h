@@ -60,6 +60,7 @@ void _owr_deep_notify(GObject *object, GstObject *orig,
     GParamSpec *pspec, gpointer user_data);
 
 int _owr_rotation_and_mirror_to_video_flip_method(guint rotation, gboolean mirror);
+void _owr_update_flip_method(GObject *renderer, GParamSpec *pspec, GstElement *flip);
 
 GHashTable *_owr_value_table_new();
 GValue *_owr_value_table_add(GHashTable *table, const gchar *key, GType type);

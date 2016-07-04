@@ -220,6 +220,19 @@ int _owr_rotation_and_mirror_to_video_flip_method(guint rotation, gboolean mirro
     }
 }
 
+void _owr_update_flip_method(GObject *source, G_GNUC_UNUSED GParamSpec *pspec, GstElement *flip)
+{
+    guint rotation = 0;
+    gboolean mirror = FALSE;
+    gint flip_method;
+
+    g_assert(GST_IS_ELEMENT(flip));
+
+    g_object_get(source, "rotation", &rotation, "mirror", &mirror, NULL);
+    flip_method = _owr_rotation_and_mirror_to_video_flip_method(rotation, mirror);
+    g_object_set(flip, "method", flip_method, NULL);
+}
+
 static void value_slice_free(gpointer value)
 {
     g_value_unset(value);
