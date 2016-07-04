@@ -309,25 +309,22 @@ static void renderer_disabled(OwrMediaRenderer *renderer, GParamSpec *pspec, Gst
 
 static void update_flip_method(OwrMediaRenderer *renderer, GParamSpec *pspec, GstElement *flip)
 {
-    guint rotation = 0;
-    gboolean mirror = FALSE;
-
-    g_return_if_fail(OWR_IS_MEDIA_RENDERER(renderer));
-    g_return_if_fail(G_IS_PARAM_SPEC(pspec) || !pspec);
-
-    g_object_get(renderer, "rotation", &rotation, "mirror", &mirror, NULL);
+    g_assert(OWR_IS_MEDIA_RENDERER(renderer));
 
     if (flip) {
-        gint flip_method = _owr_rotation_and_mirror_to_video_flip_method(rotation, mirror);
-        g_object_set(flip, "method", flip_method, NULL);
+        _owr_update_flip_method(G_OBJECT(renderer), pspec, flip);
 #if TARGET_RPI
     } else {
-        OwrMediaSource* media_source = _owr_media_renderer_get_source(renderer);
-        GstElement* src_bin = _owr_media_source_get_source_bin(media_source);
-        GstElement* src_element = gst_bin_get_by_name(GST_BIN(src_bin), "video-source");
-        gint rotation_angle = rotation * 90;
+        guint rotation = 0;
+        gboolean mirror = FALSE;
+        OwrMediaSource* media_source;
+        GstElement* src_bin;
+        GstElement* src_element;
         gboolean hflip = FALSE;
         gboolean vflip = FALSE;
+
+        g_object_get(renderer, "rotation", &rotation, "mirror", &mirror, NULL);
+        rotation = rotation * 90;
 
         if (mirror) {
             if (rotation == 0)
@@ -338,8 +335,12 @@ static void update_flip_method(OwrMediaRenderer *renderer, GParamSpec *pspec, Gs
                 hflip = TRUE;
         }
 
-        g_object_set(src_element, "rotation", rotation_angle, "hflip", hflip, "vflip", vflip, NULL);
+        media_source = _owr_media_renderer_get_source(renderer);
+        src_bin = _owr_media_source_get_source_bin(media_source);
+        src_element = gst_bin_get_by_name(GST_BIN(src_bin), "video-source");
+        g_object_set(src_element, "rotation", rotation, "hflip", hflip, "vflip", vflip, NULL);
         gst_object_unref(src_element);
+        gst_object_unref(src_bin);
 #endif
     }
 }
@@ -369,57 +370,61 @@ static void owr_video_renderer_reconfigure_element(OwrMediaRenderer *renderer)
     GstElement *parser;
     GstElement *decoder;
 #else
-    GstElement *balance, *flip, *convert;
+    GstElement *balance, *convert;
 #endif
-    GstElement *upload, *sink;
+    GstElement *upload, *sink, *flip = NULL;
     GstPad *ghostpad, *sinkpad;
+    OwrMediaSource *source;
+    GList *bin_elements, *current;
 
-    g_assert(renderer);
+    g_assert(OWR_IS_VIDEO_RENDERER(renderer));
     video_renderer = OWR_VIDEO_RENDERER(renderer);
     priv = video_renderer->priv;
 
+#if TARGET_RPI
+    parser = gst_element_factory_make("h264parse", "video-renderer-parser" );
+    decoder = gst_element_factory_make("omxh264dec", "video-renderer-decoder");
+    gst_bin_add_many(GST_BIN(priv->renderer_bin), parser, decoder, NULL);
+#endif
+
     upload = gst_element_factory_make("glupload", "video-renderer-upload");
+    gst_bin_add(GST_BIN(priv->renderer_bin), upload);
+
 #if !TARGET_RPI
     convert = gst_element_factory_make("glcolorconvert", "video-renderer-convert");
     balance = gst_element_factory_make("glcolorbalance", "video-renderer-balance");
     g_signal_connect_object(renderer, "notify::disabled", G_CALLBACK(renderer_disabled),
         balance, 0);
     renderer_disabled(renderer, NULL, balance);
-
-    flip = gst_element_factory_make("glvideoflip", "video-renderer-flip");
-    g_assert(flip);
-    g_signal_connect_object(renderer, "notify::rotation", G_CALLBACK(update_flip_method), flip, 0);
-    g_signal_connect_object(renderer, "notify::mirror", G_CALLBACK(update_flip_method), flip, 0);
-    update_flip_method(renderer, NULL, flip);
+    gst_bin_add_many(GST_BIN(priv->renderer_bin), balance, convert, NULL);
 #else
     g_signal_connect_object(renderer, "notify::disabled", G_CALLBACK(renderer_disabled),
         NULL, 0);
-    g_signal_connect_object(renderer, "notify::rotation", G_CALLBACK(update_flip_method), NULL, 0);
-    g_signal_connect_object(renderer, "notify::mirror", G_CALLBACK(update_flip_method), NULL, 0);
 #endif
+
+    source = _owr_media_renderer_get_source(renderer);
+    if (!_owr_media_source_supports_interfaces(source, OWR_MEDIA_SOURCE_SUPPORTS_VIDEO_ORIENTATION)) {
+        flip = gst_element_factory_make("glvideoflip", "video-renderer-flip");
+        if (G_LIKELY(flip)) {
+            _owr_update_flip_method(G_OBJECT(renderer), NULL, flip);
+            gst_bin_add(GST_BIN(priv->renderer_bin), flip);
+        } else
+            g_warning("no suitable flipping element");
+    }
+    g_signal_connect_object(renderer, "notify::rotation", G_CALLBACK(update_flip_method), flip, 0);
+    g_signal_connect_object(renderer, "notify::mirror", G_CALLBACK(update_flip_method), flip, 0);
+    g_object_unref(source);
 
     sink = OWR_MEDIA_RENDERER_GET_CLASS(renderer)->get_sink(renderer);
     g_assert(sink);
     g_object_set(sink, "enable-last-sample", FALSE, "sync", FALSE, NULL);
+    gst_bin_add(GST_BIN(priv->renderer_bin), sink);
 
-    gst_bin_add_many(GST_BIN(priv->renderer_bin), upload, sink, NULL);
-
-#if TARGET_RPI
-    parser = gst_element_factory_make("h264parse", "video-renderer-parser" );
-    decoder = gst_element_factory_make("omxh264dec", "video-renderer-decoder");
-    gst_bin_add_many(GST_BIN(priv->renderer_bin), parser, decoder, NULL);
-    LINK_ELEMENTS(parser, decoder);
-    LINK_ELEMENTS(decoder, upload);
-    LINK_ELEMENTS(upload, sink);
-    sinkpad = gst_element_get_static_pad(parser, "sink");
-#else
-    gst_bin_add_many(GST_BIN(priv->renderer_bin), convert, balance, flip, NULL);
-    LINK_ELEMENTS(upload, convert);
-    LINK_ELEMENTS(convert, balance);
-    LINK_ELEMENTS(balance, flip);
-    LINK_ELEMENTS(flip, sink);
-    sinkpad = gst_element_get_static_pad(upload, "sink");
-#endif
+    bin_elements = g_list_last(GST_BIN(priv->renderer_bin)->children);
+    g_assert(bin_elements);
+    for (current = bin_elements; current && current->prev; current = g_list_previous(current))
+        LINK_ELEMENTS(current->data, current->prev->data);
+    sinkpad = gst_element_get_static_pad(bin_elements->data, "sink");
 
     g_assert(sinkpad);
     ghostpad = gst_ghost_pad_new("sink", sinkpad);

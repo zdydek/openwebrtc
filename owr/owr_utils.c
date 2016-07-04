@@ -204,7 +204,7 @@ void _owr_deep_notify(GObject *object, GstObject *orig,
     g_free(path);
 }
 
-int _owr_rotation_and_mirror_to_video_flip_method(guint rotation, gboolean mirror)
+static int _owr_rotation_and_mirror_to_video_flip_method(guint rotation, gboolean mirror)
 {
 #if defined(__ANDROID__) || (defined(__APPLE__) && TARGET_OS_IPHONE)
     static gint method_table[] = {2, 3, 0, 1, 4, 7, 5, 6};
