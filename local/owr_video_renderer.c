@@ -88,7 +88,9 @@ static void owr_video_renderer_get_property(GObject *object, guint property_id,
     GValue *value, GParamSpec *pspec);
 static void owr_video_renderer_constructed(GObject *object);
 
-static GstElement *owr_video_renderer_get_element(OwrMediaRenderer *renderer, guintptr window_handle);
+static GstElement *owr_video_renderer_get_element(OwrMediaRenderer *renderer);
+static void owr_video_renderer_reconfigure_element(OwrMediaRenderer *renderer);
+static GstElement *owr_video_renderer_get_element_with_window_handle(OwrMediaRenderer *renderer, guintptr window_handle);
 static GstCaps *owr_video_renderer_get_caps(OwrMediaRenderer *renderer);
 static GstElement *owr_video_renderer_get_sink(OwrMediaRenderer *renderer);
 
@@ -99,6 +101,7 @@ struct _OwrVideoRendererPrivate {
     gint rotation;
     gboolean mirror;
     gchar *tag;
+    GstElement *renderer_bin;
 };
 
 static void owr_video_renderer_finalize(GObject *object)
@@ -110,6 +113,11 @@ static void owr_video_renderer_finalize(GObject *object)
         _owr_window_registry_unregister_renderer(owr_window_registry_get(), priv->tag, renderer);
         g_free(priv->tag);
         priv->tag = NULL;
+    }
+
+    if (priv->renderer_bin) {
+        gst_object_unref(priv->renderer_bin);
+        priv->renderer_bin = NULL;
     }
 
     G_OBJECT_CLASS(owr_video_renderer_parent_class)->finalize(object);
@@ -154,6 +162,7 @@ static void owr_video_renderer_class_init(OwrVideoRendererClass *klass)
 
     media_renderer_class->get_caps = (void *(*)(OwrMediaRenderer *))owr_video_renderer_get_caps;
     media_renderer_class->get_sink = (void *(*)(OwrMediaRenderer *))owr_video_renderer_get_sink;
+    media_renderer_class->reconfigure_element = (void (*)(OwrMediaRenderer *))owr_video_renderer_reconfigure_element;
 
     g_object_class_install_properties(gobject_class, N_PROPERTIES, obj_properties);
 }
@@ -169,6 +178,7 @@ static void owr_video_renderer_init(OwrVideoRenderer *renderer)
     priv->tag = DEFAULT_TAG;
     priv->rotation = DEFAULT_ROTATION;
     priv->mirror = DEFAULT_MIRROR;
+    priv->renderer_bin = NULL;
 }
 
 static void owr_video_renderer_set_property(GObject *object, guint property_id,
@@ -334,11 +344,27 @@ static void update_flip_method(OwrMediaRenderer *renderer, GParamSpec *pspec, Gs
     }
 }
 
-static GstElement *owr_video_renderer_get_element(OwrMediaRenderer *renderer, guintptr window_handle)
+static GstElement *owr_video_renderer_get_element(OwrMediaRenderer *renderer)
 {
     OwrVideoRenderer *video_renderer;
     OwrVideoRendererPrivate *priv;
-    GstElement *renderer_bin;
+    gchar *bin_name;
+
+    g_assert(OWR_IS_VIDEO_RENDERER(renderer));
+    video_renderer = OWR_VIDEO_RENDERER(renderer);
+    priv = video_renderer->priv;
+
+    bin_name = g_strdup_printf("video-renderer-bin-%u", g_atomic_int_add(&unique_bin_id, 1));
+    priv->renderer_bin = gst_bin_new(bin_name);
+    g_free(bin_name);
+
+    return GST_ELEMENT(gst_object_ref(priv->renderer_bin));
+}
+
+static void owr_video_renderer_reconfigure_element(OwrMediaRenderer *renderer)
+{
+    OwrVideoRenderer *video_renderer;
+    OwrVideoRendererPrivate *priv;
 #if TARGET_RPI
     GstElement *parser;
     GstElement *decoder;
@@ -347,15 +373,10 @@ static GstElement *owr_video_renderer_get_element(OwrMediaRenderer *renderer, gu
 #endif
     GstElement *upload, *sink;
     GstPad *ghostpad, *sinkpad;
-    gchar *bin_name;
 
     g_assert(renderer);
     video_renderer = OWR_VIDEO_RENDERER(renderer);
     priv = video_renderer->priv;
-
-    bin_name = g_strdup_printf("video-renderer-bin-%u", g_atomic_int_add(&unique_bin_id, 1));
-    renderer_bin = gst_bin_new(bin_name);
-    g_free(bin_name);
 
     upload = gst_element_factory_make("glupload", "video-renderer-upload");
 #if !TARGET_RPI
@@ -380,29 +401,19 @@ static GstElement *owr_video_renderer_get_element(OwrMediaRenderer *renderer, gu
     sink = OWR_MEDIA_RENDERER_GET_CLASS(renderer)->get_sink(renderer);
     g_assert(sink);
     g_object_set(sink, "enable-last-sample", FALSE, "sync", FALSE, NULL);
-    if (priv->tag) {
-        GstElement *sink_element = GST_IS_BIN(sink) ?
-            gst_bin_get_by_interface(GST_BIN(sink), GST_TYPE_VIDEO_OVERLAY) : sink;
-        if (GST_IS_ELEMENT(sink_element) && GST_IS_VIDEO_OVERLAY(sink))
-            gst_video_overlay_set_window_handle(GST_VIDEO_OVERLAY(sink), window_handle);
-        else
-            g_warn_if_reached();
-        if (GST_IS_BIN(sink))
-            g_object_unref(sink_element);
-    }
 
-    gst_bin_add_many(GST_BIN(renderer_bin), upload, sink, NULL);
+    gst_bin_add_many(GST_BIN(priv->renderer_bin), upload, sink, NULL);
 
 #if TARGET_RPI
     parser = gst_element_factory_make("h264parse", "video-renderer-parser" );
     decoder = gst_element_factory_make("omxh264dec", "video-renderer-decoder");
-    gst_bin_add_many(GST_BIN(renderer_bin), parser, decoder, NULL);
+    gst_bin_add_many(GST_BIN(priv->renderer_bin), parser, decoder, NULL);
     LINK_ELEMENTS(parser, decoder);
     LINK_ELEMENTS(decoder, upload);
     LINK_ELEMENTS(upload, sink);
     sinkpad = gst_element_get_static_pad(parser, "sink");
 #else
-    gst_bin_add_many(GST_BIN(renderer_bin), convert, balance, flip, NULL);
+    gst_bin_add_many(GST_BIN(priv->renderer_bin), convert, balance, flip, NULL);
     LINK_ELEMENTS(upload, convert);
     LINK_ELEMENTS(convert, balance);
     LINK_ELEMENTS(balance, flip);
@@ -413,8 +424,31 @@ static GstElement *owr_video_renderer_get_element(OwrMediaRenderer *renderer, gu
     g_assert(sinkpad);
     ghostpad = gst_ghost_pad_new("sink", sinkpad);
     gst_pad_set_active(ghostpad, TRUE);
-    gst_element_add_pad(renderer_bin, ghostpad);
+    gst_element_add_pad(priv->renderer_bin, ghostpad);
     gst_object_unref(sinkpad);
+}
+
+static GstElement *owr_video_renderer_get_element_with_window_handle(OwrMediaRenderer *renderer, guintptr window_handle)
+{
+    GstElement *renderer_bin, *sink;
+
+    g_assert(OWR_IS_VIDEO_RENDERER(renderer));
+
+    renderer_bin = owr_video_renderer_get_element(renderer);
+    owr_video_renderer_reconfigure_element(renderer);
+
+    sink = OWR_MEDIA_RENDERER_GET_CLASS(renderer)->get_sink(renderer);
+    g_assert(sink);
+    if (OWR_VIDEO_RENDERER(renderer)->priv->tag) {
+        GstElement *sink_element = GST_IS_BIN(sink) ?
+            gst_bin_get_by_interface(GST_BIN(sink), GST_TYPE_VIDEO_OVERLAY) : sink;
+        if (GST_IS_ELEMENT(sink_element) && GST_IS_VIDEO_OVERLAY(sink))
+            gst_video_overlay_set_window_handle(GST_VIDEO_OVERLAY(sink), window_handle);
+        else
+            g_warn_if_reached();
+        if (GST_IS_BIN(sink))
+            g_object_unref(sink_element);
+    }
 
     return renderer_bin;
 }
@@ -429,7 +463,7 @@ static void owr_video_renderer_constructed(GObject *object)
 
     /* If we have no tag, just directly create the sink */
     if (!priv->tag)
-        _owr_media_renderer_set_sink(OWR_MEDIA_RENDERER(video_renderer), owr_video_renderer_get_element(OWR_MEDIA_RENDERER(video_renderer), 0));
+        _owr_media_renderer_set_sink(OWR_MEDIA_RENDERER(video_renderer), owr_video_renderer_get_element(OWR_MEDIA_RENDERER(video_renderer)));
 
     G_OBJECT_CLASS(owr_video_renderer_parent_class)->constructed(object);
 }
@@ -491,6 +525,6 @@ void _owr_video_renderer_notify_tag_changed(OwrVideoRenderer *video_renderer, co
     _owr_media_renderer_set_sink(OWR_MEDIA_RENDERER(video_renderer), NULL);
     if (have_handle) {
         _owr_media_renderer_set_sink(OWR_MEDIA_RENDERER(video_renderer),
-            owr_video_renderer_get_element(OWR_MEDIA_RENDERER(video_renderer), new_handle));
+            owr_video_renderer_get_element_with_window_handle(OWR_MEDIA_RENDERER(video_renderer), new_handle));
     }
 }

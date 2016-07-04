@@ -38,6 +38,7 @@ G_BEGIN_DECLS
 
 void _owr_media_renderer_set_sink(OwrMediaRenderer *renderer, gpointer sink);
 OwrMediaSource* _owr_media_renderer_get_source(OwrMediaRenderer *renderer);
+void _owr_media_renderer_reconfigure_element(OwrMediaRenderer *renderer);
 
 G_END_DECLS
 
