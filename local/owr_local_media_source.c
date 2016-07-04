@@ -729,7 +729,8 @@ done:
 }
 
 static OwrLocalMediaSource *_owr_local_media_source_new(gint device_index, const gchar *name,
-    OwrMediaType media_type, OwrSourceType source_type)
+    OwrMediaType media_type, OwrSourceType source_type,
+    OwrMediaSourceSupportedInterfaces interfaces)
 {
     OwrLocalMediaSource *source;
 
@@ -740,12 +741,14 @@ static OwrLocalMediaSource *_owr_local_media_source_new(gint device_index, const
         NULL);
 
     _owr_media_source_set_type(OWR_MEDIA_SOURCE(source), source_type);
+    _owr_media_source_set_supported_interfaces(OWR_MEDIA_SOURCE(source), interfaces);
 
     return source;
 }
 
 OwrLocalMediaSource *_owr_local_media_source_new_cached(gint device_index, const gchar *name,
-    OwrMediaType media_type, OwrSourceType source_type)
+    OwrMediaType media_type, OwrSourceType source_type,
+    OwrMediaSourceSupportedInterfaces interfaces)
 {
     static OwrLocalMediaSource *test_sources[2] = { NULL, };
     static GHashTable *sources[2] = { NULL, };
@@ -766,7 +769,7 @@ OwrLocalMediaSource *_owr_local_media_source_new_cached(gint device_index, const
 
     if (source_type == OWR_SOURCE_TYPE_TEST) {
         if (!test_sources[i])
-            test_sources[i] = _owr_local_media_source_new(device_index, name, media_type, source_type);
+            test_sources[i] = _owr_local_media_source_new(device_index, name, media_type, source_type, interfaces);
 
         ret = test_sources[i];
 
@@ -786,7 +789,7 @@ OwrLocalMediaSource *_owr_local_media_source_new_cached(gint device_index, const
         }
 
         if (!ret) {
-            ret = _owr_local_media_source_new(device_index, name, media_type, source_type);
+            ret = _owr_local_media_source_new(device_index, name, media_type, source_type, interfaces);
             g_hash_table_insert(sources[i], GINT_TO_POINTER(device_index), ret);
         }
 

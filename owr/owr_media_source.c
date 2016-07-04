@@ -121,6 +121,8 @@ struct _OwrMediaSourcePrivate {
     GstElement *source_bin;
     /* Tee element from which we can tap the source for multiple consumers */
     GstElement *source_tee;
+
+    OwrMediaSourceSupportedInterfaces supported_interfaces;
 };
 
 static void owr_media_source_set_property(GObject *object, guint property_id,
@@ -197,6 +199,7 @@ static void owr_media_source_init(OwrMediaSource *source)
 
     priv->source_bin = NULL;
     priv->source_tee = NULL;
+    priv->supported_interfaces = OWR_MEDIA_SOURCE_SUPPORTS_NONE;
 
     g_mutex_init(&source->lock);
 }
@@ -647,4 +650,16 @@ gchar * owr_media_source_get_dot_data(OwrMediaSource *source)
 #else
     return g_strdup("");
 #endif
+}
+
+void _owr_media_source_set_supported_interfaces(OwrMediaSource *source, OwrMediaSourceSupportedInterfaces interfaces)
+{
+    g_return_if_fail(OWR_IS_MEDIA_SOURCE(source));
+    source->priv->supported_interfaces = interfaces;
+}
+
+gboolean _owr_media_source_supports_interfaces(OwrMediaSource *source, OwrMediaSourceSupportedInterfaces interfaces)
+{
+    g_return_val_if_fail(OWR_IS_MEDIA_SOURCE(source), FALSE);
+    return source->priv->supported_interfaces & interfaces;
 }

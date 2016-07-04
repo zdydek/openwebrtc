@@ -43,6 +43,11 @@
 
 G_BEGIN_DECLS
 
+typedef enum {
+    OWR_MEDIA_SOURCE_SUPPORTS_NONE = 0,
+    OWR_MEDIA_SOURCE_SUPPORTS_VIDEO_ORIENTATION = (1 << 0),
+} OwrMediaSourceSupportedInterfaces;
+
 GstElement *_owr_media_source_get_source_bin(OwrMediaSource *media_source);
 void _owr_media_source_set_source_bin(OwrMediaSource *media_source, GstElement *bin);
 
@@ -56,6 +61,10 @@ void _owr_media_source_set_type(OwrMediaSource *source, OwrSourceType type);
 
 void _owr_media_source_set_codec(OwrMediaSource *source, OwrCodecType codec_type);
 OwrCodecType _owr_media_source_get_codec(OwrMediaSource *source);
+
+void _owr_media_source_set_supported_interfaces(OwrMediaSource *source, OwrMediaSourceSupportedInterfaces interfaces);
+
+gboolean _owr_media_source_supports_interfaces(OwrMediaSource *source, OwrMediaSourceSupportedInterfaces interfaces);
 
 G_END_DECLS
 
