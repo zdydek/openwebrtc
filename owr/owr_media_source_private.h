@@ -46,6 +46,7 @@ G_BEGIN_DECLS
 typedef enum {
     OWR_MEDIA_SOURCE_SUPPORTS_NONE = 0,
     OWR_MEDIA_SOURCE_SUPPORTS_VIDEO_ORIENTATION = (1 << 0),
+    OWR_MEDIA_SOURCE_SUPPORTS_COLOR_BALANCE = (1 << 1),
 } OwrMediaSourceSupportedInterfaces;
 
 GstElement *_owr_media_source_get_source_bin(OwrMediaSource *media_source);

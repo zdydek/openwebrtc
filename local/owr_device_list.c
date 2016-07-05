@@ -384,7 +384,7 @@ static gboolean enumerate_video_source_devices(GClosure *callback)
 #if TARGET_RPI
     source = _owr_local_media_source_new_cached(-1, "RPiCam",
         OWR_MEDIA_TYPE_VIDEO, OWR_SOURCE_TYPE_CAPTURE,
-        OWR_MEDIA_SOURCE_SUPPORTS_VIDEO_ORIENTATION);
+        OWR_MEDIA_SOURCE_SUPPORTS_VIDEO_ORIENTATION | OWR_MEDIA_SOURCE_SUPPORTS_COLOR_BALANCE);
     sources = g_list_prepend(sources, source);
 #endif
 

@@ -270,26 +270,25 @@ OwrVideoRenderer *owr_video_renderer_new(const gchar *tag)
     if (!gst_element_link(a, b)) \
         GST_ERROR("Failed to link " #a " -> " #b);
 
-static void renderer_disabled(OwrMediaRenderer *renderer, GParamSpec *pspec, GstElement *balance)
+static void renderer_disabled(OwrMediaRenderer *renderer, G_GNUC_UNUSED GParamSpec *pspec, GstElement *balance)
 {
+    // FIXME: We need to be able to disable rendering without a
+    // balance element. This is highly inneficient.
     gboolean disabled = FALSE;
     GstColorBalance* color_balance = NULL;
-    GstElement* balance_element = NULL;
 
     g_return_if_fail(OWR_IS_MEDIA_RENDERER(renderer));
-    g_return_if_fail(G_IS_PARAM_SPEC(pspec) || !pspec);
 
-    if (balance && GST_IS_COLOR_BALANCE(balance)) {
-        color_balance = GST_COLOR_BALANCE(balance);
+    if (GST_IS_COLOR_BALANCE(balance)) {
+        color_balance = GST_COLOR_BALANCE(gst_object_ref(balance));
     } else {
         OwrMediaSource* media_source = _owr_media_renderer_get_source(renderer);
         GstElement* src_bin = _owr_media_source_get_source_bin(media_source);
-        balance_element = gst_bin_get_by_interface(GST_BIN(src_bin), GST_TYPE_COLOR_BALANCE);
-        if (balance_element)
-            color_balance = GST_COLOR_BALANCE(balance_element);
+        balance = gst_bin_get_by_interface(GST_BIN(src_bin), GST_TYPE_COLOR_BALANCE);
+        gst_object_unref(src_bin);
+        g_return_if_fail(GST_IS_COLOR_BALANCE(balance));
+        color_balance = GST_COLOR_BALANCE(balance);
     }
-
-    g_return_if_fail(GST_IS_COLOR_BALANCE(color_balance));
 
     g_object_get(renderer, "disabled", &disabled, NULL);
 
@@ -297,14 +296,13 @@ static void renderer_disabled(OwrMediaRenderer *renderer, GParamSpec *pspec, Gst
     gint index = 0;
     for (const GList* item = controls; item != NULL; item = item->next, ++index) {
         GstColorBalanceChannel* channel = item->data;
-        gint current_value = gst_color_balance_get_value(color_balance, channel);
-        gint new_value = current_value;
-        if (g_str_equal(channel->label, "SATURATION") || g_str_equal(channel->label, "BRIGHTNESS"))
-            new_value = disabled ? channel->min_value : ((channel->min_value + channel->max_value) / 2);
-        gst_color_balance_set_value(color_balance, channel, new_value);
+        if (g_strcmp0(channel->label, "SATURATION") == 0 || g_strcmp0(channel->label, "BRIGHTNESS") == 0) {
+            gint new_value = disabled ? channel->min_value : ((channel->min_value + channel->max_value) / 2);
+            gst_color_balance_set_value(color_balance, channel, new_value);
+        }
     }
 
-    gst_object_unref(balance_element);
+    gst_object_unref(color_balance);
 }
 
 static void update_flip_method(OwrMediaRenderer *renderer, GParamSpec *pspec, GstElement *flip)
@@ -369,9 +367,8 @@ static void owr_video_renderer_reconfigure_element(OwrMediaRenderer *renderer)
 #if TARGET_RPI
     GstElement *parser;
     GstElement *decoder;
-#else
-    GstElement *balance, *convert;
 #endif
+    GstElement *balance = NULL;
     GstElement *upload, *sink, *flip = NULL;
     GstPad *ghostpad, *sinkpad;
     OwrMediaSource *source;
@@ -390,19 +387,28 @@ static void owr_video_renderer_reconfigure_element(OwrMediaRenderer *renderer)
     upload = gst_element_factory_make("glupload", "video-renderer-upload");
     gst_bin_add(GST_BIN(priv->renderer_bin), upload);
 
-#if !TARGET_RPI
-    convert = gst_element_factory_make("glcolorconvert", "video-renderer-convert");
-    balance = gst_element_factory_make("glcolorbalance", "video-renderer-balance");
-    g_signal_connect_object(renderer, "notify::disabled", G_CALLBACK(renderer_disabled),
-        balance, 0);
-    renderer_disabled(renderer, NULL, balance);
-    gst_bin_add_many(GST_BIN(priv->renderer_bin), balance, convert, NULL);
-#else
-    g_signal_connect_object(renderer, "notify::disabled", G_CALLBACK(renderer_disabled),
-        NULL, 0);
-#endif
-
     source = _owr_media_renderer_get_source(renderer);
+
+    if (!_owr_media_source_supports_interfaces(source, OWR_MEDIA_SOURCE_SUPPORTS_COLOR_BALANCE)) {
+        GstElement *convert = NULL;
+
+        balance = gst_element_factory_make("glcolorbalance", "video-renderer-balance");
+
+        if (G_LIKELY(balance)) {
+            convert = gst_element_factory_make("glcolorconvert", "video-renderer-convert");
+
+            if (G_LIKELY(convert)) {
+                renderer_disabled(renderer, NULL, balance);
+                gst_bin_add_many(GST_BIN(priv->renderer_bin), convert, balance, NULL);
+            } else
+                g_object_unref(balance);
+        }
+
+        if (!convert || !balance)
+            g_warning("cannot create convert or balance elements to disable rendering");
+    }
+    g_signal_connect_object(renderer, "notify::disabled", G_CALLBACK(renderer_disabled), balance, 0);
+
     if (!_owr_media_source_supports_interfaces(source, OWR_MEDIA_SOURCE_SUPPORTS_VIDEO_ORIENTATION)) {
         flip = gst_element_factory_make("glvideoflip", "video-renderer-flip");
         if (G_LIKELY(flip)) {
@@ -413,6 +419,7 @@ static void owr_video_renderer_reconfigure_element(OwrMediaRenderer *renderer)
     }
     g_signal_connect_object(renderer, "notify::rotation", G_CALLBACK(update_flip_method), flip, 0);
     g_signal_connect_object(renderer, "notify::mirror", G_CALLBACK(update_flip_method), flip, 0);
+
     g_object_unref(source);
 
     sink = OWR_MEDIA_RENDERER_GET_CLASS(renderer)->get_sink(renderer);
