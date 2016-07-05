@@ -2176,10 +2176,10 @@ static void handle_new_send_payload(OwrTransportAgent *transport_agent, OwrMedia
     GstPad *sink_pad = NULL, *rtp_sink_pad = NULL, *rtp_capsfilter_src_pad = NULL,
         *ghost_src_pad = NULL, *encoder_sink_pad;
     OwrMediaType media_type;
-    GstPadLinkReturn link_res;
     guint send_ssrc = 0;
     gchar *cname = NULL;
     OwrMediaSource *media_source = NULL;
+    GList *bin_elements, *current;
 
     g_return_if_fail(transport_agent);
     g_return_if_fail(media_session);
@@ -2232,35 +2232,18 @@ static void handle_new_send_payload(OwrTransportAgent *transport_agent, OwrMedia
 
     g_object_set(rtp_capsfilter, "caps", rtp_caps, NULL);
     gst_caps_unref(rtp_caps);
-    gst_bin_add(GST_BIN(send_input_bin), rtp_capsfilter);
-
-    rtp_capsfilter_src_pad = gst_element_get_static_pad(rtp_capsfilter, "src");
-    name = g_strdup_printf("src_%u", stream_id);
-    ghost_src_pad = ghost_pad_and_add_to_bin(rtp_capsfilter_src_pad, send_input_bin, name);
-    gst_object_unref(rtp_capsfilter_src_pad);
-    g_free(name);
-
-    link_res = gst_pad_link(ghost_src_pad, rtp_sink_pad);
-    g_warn_if_fail(link_res == GST_PAD_LINK_OK);
-    gst_object_unref(rtp_sink_pad);
-
-    sync_ok &= gst_element_sync_state_with_parent(rtp_capsfilter);
-    g_warn_if_fail(sync_ok);
 
     media_source = _owr_media_session_get_send_source(media_session);
 
     if (media_type == OWR_MEDIA_TYPE_VIDEO && OWR_IS_VIDEO_PAYLOAD(payload)) {
         GstElement *gldownload;
-        GstIterator *send_input_bin_iterator;
-        GValue send_input_bin_iterator_value = G_VALUE_INIT;
-        gboolean send_input_bin_iterator_done = FALSE;
-        GstElement *flip = NULL, *queue = NULL, *encoder_capsfilter = NULL, *send_input_bin_iterator_element;
-        name = g_strdup_printf("send-input-video-gldownload-%u", stream_id);
-        gldownload = gst_element_factory_make("gldownload", name);
-        g_free(name);
-
-        payloader = _owr_payload_create_payload_packetizer(payload);
-        gst_bin_add_many(GST_BIN(send_input_bin), gldownload, payloader, NULL);
+        GstElement *flip = NULL, *queue = NULL, *encoder_capsfilter = NULL;
+        if (_owr_codec_type_is_raw(_owr_payload_get_codec_type(payload))) {
+            name = g_strdup_printf("send-input-video-gldownload-%u", stream_id);
+            gldownload = gst_element_factory_make("gldownload", name);
+            g_free(name);
+            gst_bin_add(GST_BIN(send_input_bin), gldownload);
+        }
 
         if (!_owr_media_source_supports_interfaces(media_source, OWR_MEDIA_SOURCE_SUPPORTS_VIDEO_ORIENTATION)) {
             name = g_strdup_printf("send-input-video-flip-%u", stream_id);
@@ -2280,7 +2263,7 @@ static void handle_new_send_payload(OwrTransportAgent *transport_agent, OwrMedia
             encoder = _owr_payload_create_encoder(payload);
             parser = _owr_payload_create_parser(payload);
 
-            g_warn_if_fail(payloader && encoder);
+            g_warn_if_fail(encoder);
 
             encoder_sink_pad = gst_element_get_static_pad(encoder, "sink");
             g_signal_connect(encoder_sink_pad, "notify::caps", G_CALLBACK(on_caps), OWR_SESSION(media_session));
@@ -2293,80 +2276,58 @@ static void handle_new_send_payload(OwrTransportAgent *transport_agent, OwrMedia
             g_object_set(encoder_capsfilter, "caps", caps, NULL);
             gst_caps_unref(caps);
 
-            gst_bin_add_many(GST_BIN(send_input_bin), flip, queue, encoder, encoder_capsfilter, NULL);
+            gst_bin_add_many(GST_BIN(send_input_bin), flip, queue, encoder, NULL);
 
-            if (parser) {
+            if (parser)
                 gst_bin_add(GST_BIN(send_input_bin), parser);
-                link_ok &= gst_element_link_many(gldownload, flip, queue, encoder, parser, encoder_capsfilter, payloader, NULL);
-            } else
-                link_ok &= gst_element_link_many(gldownload, flip, queue, encoder, encoder_capsfilter, payloader, NULL);
-        } else
-            link_ok &= gst_element_link(gldownload, payloader);
-
-        link_ok &= gst_element_link_many(payloader, rtp_capsfilter, NULL);
-
-        g_warn_if_fail(link_ok);
-
-        send_input_bin_iterator = gst_bin_iterate_sorted(GST_BIN(send_input_bin));
-        while (!send_input_bin_iterator_done) {
-            switch (gst_iterator_next (send_input_bin_iterator, &send_input_bin_iterator_value)) {
-            case GST_ITERATOR_OK:
-                {
-                    send_input_bin_iterator_element = GST_ELEMENT(g_value_get_object(&send_input_bin_iterator_value));
-                    sync_ok &= gst_element_sync_state_with_parent(send_input_bin_iterator_element);
-                    g_value_reset (&send_input_bin_iterator_value);
-                    break;
-                }
-            case GST_ITERATOR_RESYNC:
-            case GST_ITERATOR_ERROR:
-                g_warning("iterator errored or needing resync");
-            case GST_ITERATOR_DONE:
-                send_input_bin_iterator_done = TRUE;
-                break;
-            }
+            gst_bin_add(GST_BIN(send_input_bin), encoder_capsfilter);
         }
-        g_value_unset (&send_input_bin_iterator_value);
-        gst_iterator_free (send_input_bin_iterator);
-
-        name = g_strdup_printf("video_sink_%u_%u", OWR_CODEC_TYPE_NONE, stream_id);
-        sink_pad = gst_element_get_static_pad(flip ? flip : payloader, "sink");
-        add_pads_to_bin_and_transport_bin(sink_pad, send_input_bin,
-            transport_agent->priv->transport_bin, name);
-        gst_object_unref(sink_pad);
-        g_free(name);
     } else { /* Audio */
         encoder = _owr_payload_create_encoder(payload);
         parser = _owr_payload_create_parser(payload);
-        payloader = _owr_payload_create_payload_packetizer(payload);
 
         encoder_sink_pad = gst_element_get_static_pad(encoder, "sink");
         g_signal_connect(encoder_sink_pad, "notify::caps", G_CALLBACK(on_caps), OWR_SESSION(media_session));
         gst_object_unref(encoder_sink_pad);
 
-        gst_bin_add_many(GST_BIN(send_input_bin), encoder, payloader, NULL);
-        if (parser) {
-            gst_bin_add(GST_BIN(send_input_bin), parser);
-            link_ok &= gst_element_link_many(encoder, parser, payloader, NULL);
-        } else
-            link_ok &= gst_element_link_many(encoder, payloader, NULL);
-
-        link_ok &= gst_element_link_many(payloader, rtp_capsfilter, NULL);
-        g_warn_if_fail(link_ok);
-
-        sync_ok &= gst_element_sync_state_with_parent(rtp_capsfilter);
-        sync_ok &= gst_element_sync_state_with_parent(payloader);
+        gst_bin_add(GST_BIN(send_input_bin), encoder);
         if (parser)
-            sync_ok &= gst_element_sync_state_with_parent(parser);
-        sync_ok &= gst_element_sync_state_with_parent(encoder);
-        g_warn_if_fail(sync_ok);
-
-        name = g_strdup_printf("audio_raw_sink_%u", stream_id);
-        sink_pad = gst_element_get_static_pad(encoder, "sink");
-        add_pads_to_bin_and_transport_bin(sink_pad, send_input_bin,
-            transport_agent->priv->transport_bin, name);
-        gst_object_unref(sink_pad);
-        g_free(name);
+            gst_bin_add(GST_BIN(send_input_bin), parser);
     }
+
+    payloader = _owr_payload_create_payload_packetizer(payload);
+    g_assert(payloader);
+    gst_bin_add_many(GST_BIN(send_input_bin), payloader, rtp_capsfilter, NULL);
+
+    bin_elements = g_list_last(GST_BIN(send_input_bin)->children);
+    g_assert(bin_elements);
+    for (current = bin_elements; current && current->prev && link_ok && sync_ok; current = g_list_previous(current)) {
+        link_ok &= gst_element_link(current->data, current->prev->data);
+        sync_ok &= gst_element_sync_state_with_parent(current->data);
+    }
+    g_warn_if_fail(link_ok);
+    if (link_ok && sync_ok && current && !current->prev)
+        sync_ok &= gst_element_sync_state_with_parent(current->data);
+    g_warn_if_fail(sync_ok);
+
+    name = g_strdup_printf("%s_sink_%u_%u", media_type == OWR_MEDIA_TYPE_VIDEO ? "video" : "audio",
+        OWR_CODEC_TYPE_NONE, stream_id);
+    sink_pad = gst_element_get_static_pad(bin_elements->data, "sink");
+    add_pads_to_bin_and_transport_bin(sink_pad, send_input_bin,
+        transport_agent->priv->transport_bin, name);
+    gst_object_unref(sink_pad);
+    g_free(name);
+
+    rtp_capsfilter_src_pad = gst_element_get_static_pad(rtp_capsfilter, "src");
+    name = g_strdup_printf("src_%u", stream_id);
+    ghost_src_pad = ghost_pad_and_add_to_bin(rtp_capsfilter_src_pad, send_input_bin, name);
+    gst_object_unref(rtp_capsfilter_src_pad);
+    g_free(name);
+    g_warn_if_fail(gst_pad_link(ghost_src_pad, rtp_sink_pad) == GST_PAD_LINK_OK);
+    gst_object_unref(rtp_sink_pad);
+
+    GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(send_input_bin), GST_DEBUG_GRAPH_SHOW_ALL, "send-input-bin");
+
     g_object_unref(media_source);
 }
 

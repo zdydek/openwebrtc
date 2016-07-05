@@ -39,6 +39,8 @@ G_BEGIN_DECLS
 
 #define OWR_UNUSED(x) (void)x
 
+#define _owr_codec_type_is_raw(codec_type) (codec_type == OWR_CODEC_TYPE_NONE)
+
 void *_owr_require_symbols(void);
 OwrCodecType _owr_caps_to_codec_type(GstCaps *caps);
 void _owr_utils_call_closure_with_list(GClosure *callback, GList *list);

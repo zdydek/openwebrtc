@@ -578,6 +578,14 @@ OwrMediaType _owr_payload_get_media_type(OwrPayload *payload)
     return media_type;
 }
 
+OwrCodecType _owr_payload_get_codec_type(OwrPayload *payload)
+{
+    OwrCodecType codec_type = OWR_CODEC_TYPE_NONE;
+
+    g_object_get(payload, "codec-type", &codec_type, NULL);
+    return codec_type;
+}
+
 
 GstCaps * _owr_payload_create_rtp_caps(OwrPayload *payload)
 {
