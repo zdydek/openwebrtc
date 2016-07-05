@@ -2158,8 +2158,10 @@ static void on_caps(GstElement *sink, GParamSpec *pspec, OwrSession *session)
 
     g_object_get(sink, "caps", &caps, NULL);
 
-    if (GST_IS_CAPS(caps))
+    if (GST_IS_CAPS(caps)) {
         GST_CAT_INFO_OBJECT(_owrsession_debug, session, "Sending media configured with caps: %" GST_PTR_FORMAT, caps);
+        gst_caps_unref(caps);
+    }
 }
 
 static void handle_new_send_payload(OwrTransportAgent *transport_agent, OwrMediaSession *media_session, OwrPayload * payload)

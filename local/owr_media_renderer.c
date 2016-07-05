@@ -311,6 +311,7 @@ static void on_caps(GstElement *sink, GParamSpec *pspec, OwrMediaRenderer *media
             media_renderer->priv->media_type == OWR_MEDIA_TYPE_AUDIO ? "Audio" :
             media_renderer->priv->media_type == OWR_MEDIA_TYPE_VIDEO ? "Video" :
             "Unknown", caps);
+        gst_caps_unref(caps);
     }
 }
 
