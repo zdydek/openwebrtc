@@ -309,38 +309,27 @@ static void update_flip_method(OwrMediaRenderer *renderer, GParamSpec *pspec, Gs
 {
     g_assert(OWR_IS_MEDIA_RENDERER(renderer));
 
-    if (flip) {
-        _owr_update_flip_method(G_OBJECT(renderer), pspec, flip);
-#if TARGET_RPI
-    } else {
-        guint rotation = 0;
-        gboolean mirror = FALSE;
-        OwrMediaSource* media_source;
-        GstElement* src_bin;
-        GstElement* src_element;
-        gboolean hflip = FALSE;
-        gboolean vflip = FALSE;
+    if (!flip) {
+        OwrMediaSource* source = _owr_media_renderer_get_source(renderer);
 
-        g_object_get(renderer, "rotation", &rotation, "mirror", &mirror, NULL);
-        rotation = rotation * 90;
+        if (_owr_media_source_supports_interfaces(source, OWR_MEDIA_SOURCE_SUPPORTS_VIDEO_ORIENTATION)) {
+            GstElement* bin = _owr_media_source_get_source_bin(source);
 
-        if (mirror) {
-            if (rotation == 0)
-                vflip = TRUE;
-            else if (rotation == 1)
-                vflip = hflip = TRUE;
-            else if (rotation == 2)
-                hflip = TRUE;
+            flip = gst_bin_get_by_name(GST_BIN(bin), "video-source");
+            g_assert(flip);
+
+            pspec = g_object_class_find_property(G_OBJECT_GET_CLASS(flip), "orientation");
+
+            // For simplicity, and considering that we already assume
+            // with the parameter that the object is alive, we can
+            // safely unref here.
+            gst_object_unref(flip);
+            gst_object_unref(bin);
         }
-
-        media_source = _owr_media_renderer_get_source(renderer);
-        src_bin = _owr_media_source_get_source_bin(media_source);
-        src_element = gst_bin_get_by_name(GST_BIN(src_bin), "video-source");
-        g_object_set(src_element, "rotation", rotation, "hflip", hflip, "vflip", vflip, NULL);
-        gst_object_unref(src_element);
-        gst_object_unref(src_bin);
-#endif
     }
+
+    if (flip)
+        _owr_update_flip_method(G_OBJECT(renderer), pspec, flip);
 }
 
 static GstElement *owr_video_renderer_get_element(OwrMediaRenderer *renderer)
