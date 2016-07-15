@@ -353,30 +353,31 @@ static void owr_video_renderer_reconfigure_element(OwrMediaRenderer *renderer)
 {
     OwrVideoRenderer *video_renderer;
     OwrVideoRendererPrivate *priv;
-#if TARGET_RPI
     GstElement *parser;
     GstElement *decoder;
-#endif
     GstElement *balance = NULL;
     GstElement *upload, *sink, *flip = NULL;
     GstPad *ghostpad, *sinkpad;
     OwrMediaSource *source;
     GList *bin_elements, *current;
+    OwrCodecType codec_type;
 
     g_assert(OWR_IS_VIDEO_RENDERER(renderer));
     video_renderer = OWR_VIDEO_RENDERER(renderer);
     priv = video_renderer->priv;
 
-#if TARGET_RPI
-    parser = gst_element_factory_make("h264parse", "video-renderer-parser" );
-    decoder = gst_element_factory_make("omxh264dec", "video-renderer-decoder");
-    gst_bin_add_many(GST_BIN(priv->renderer_bin), parser, decoder, NULL);
-#endif
+    source = _owr_media_renderer_get_source(renderer);
+    codec_type = _owr_media_source_get_codec(source);
+
+    parser = _owr_create_parser(codec_type);
+    decoder = _owr_create_decoder(codec_type);
+    if (parser)
+      gst_bin_add(GST_BIN(priv->renderer_bin), parser);
+    if (decoder)
+      gst_bin_add(GST_BIN(priv->renderer_bin), decoder);
 
     upload = gst_element_factory_make("glupload", "video-renderer-upload");
     gst_bin_add(GST_BIN(priv->renderer_bin), upload);
-
-    source = _owr_media_renderer_get_source(renderer);
 
     if (!_owr_media_source_supports_interfaces(source, OWR_MEDIA_SOURCE_SUPPORTS_COLOR_BALANCE)) {
         GstElement *convert = NULL;
