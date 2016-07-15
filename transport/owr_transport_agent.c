@@ -2546,19 +2546,17 @@ static GstPadProbeReturn check_for_keyframe(GstPad *pad, GstPadProbeInfo *info,
 
 static void setup_video_receive_elements(GstPad *new_pad, guint32 session_id, OwrPayload *payload, OwrTransportAgent *transport_agent)
 {
-    GstPad *depay_sink_pad = NULL, *ghost_pad = NULL;
+    GstPad *sink_pad = NULL, *ghost_pad = NULL;
     gboolean sync_ok = TRUE;
     GstElement *receive_output_bin;
     GstElement *rtpdepay, *videorepair1, *parser;
-#if !TARGET_RPI
-    GstElement *decoder;
-#endif
     GstPadLinkReturn link_res;
     gboolean link_ok = TRUE;
-    OwrCodecType codec_type = OWR_CODEC_TYPE_NONE;
+    OwrCodecType codec_type;
     gchar name[100];
     GstPad *pad;
     SessionData *session_data;
+    GList *bin_elements, *current;
 
     g_snprintf(name, OWR_OBJECT_NAME_LENGTH_MAX, "receive-output-bin-%u", session_id);
     receive_output_bin = gst_bin_new(name);
@@ -2570,8 +2568,16 @@ static void setup_video_receive_elements(GstPad *new_pad, guint32 session_id, Ow
     }
 
     rtpdepay = _owr_payload_create_payload_depacketizer(payload);
+    gst_bin_add(GST_BIN(receive_output_bin), rtpdepay);
+
+    codec_type = _owr_payload_get_codec_type(payload);
+    parser = _owr_create_parser(codec_type);
+    if (parser)
+        gst_bin_add(GST_BIN(receive_output_bin), parser);
+
     g_snprintf(name, OWR_OBJECT_NAME_LENGTH_MAX, "videorepair1_%u", session_id);
     videorepair1 = gst_element_factory_make("videorepair", name);
+    gst_bin_add(GST_BIN(receive_output_bin), videorepair1);
 
     pad = gst_element_get_static_pad(videorepair1, "src");
     session_data = g_slice_new(SessionData);
@@ -2582,45 +2588,25 @@ static void setup_video_receive_elements(GstPad *new_pad, guint32 session_id, Ow
     gst_object_unref(pad);
     pad = NULL;
 
-    g_object_get(payload, "codec-type", &codec_type, NULL);
-    parser = _owr_create_parser(_owr_payload_get_codec_type(payload));
-#if !TARGET_RPI
-    decoder = _owr_create_decoder(_owr_payload_get_codec_type(payload));
-    gst_bin_add(GST_BIN(receive_output_bin), decoder);
-#endif
-    gst_bin_add_many(GST_BIN(receive_output_bin), rtpdepay,
-        videorepair1, /*decoded_tee,*/ NULL);
-    depay_sink_pad = gst_element_get_static_pad(rtpdepay, "sink");
-    if (parser) {
-        gst_bin_add(GST_BIN(receive_output_bin), parser);
-        link_ok &= gst_element_link_many(rtpdepay, parser, videorepair1, NULL);
-    } else
-        link_ok &= gst_element_link_many(rtpdepay, videorepair1, NULL);
+    bin_elements = g_list_last(GST_BIN(receive_output_bin)->children);
+    g_assert(bin_elements);
+    for (current = bin_elements; current && current->prev && link_ok && sync_ok; current = g_list_previous(current)) {
+        link_ok &= gst_element_link(current->data, current->prev->data);
+        sync_ok &= gst_element_sync_state_with_parent(current->data);
+    }
+    g_warn_if_fail(link_ok);
+    if (link_ok && sync_ok && current && !current->prev)
+        sync_ok &= gst_element_sync_state_with_parent(current->data);
+    g_warn_if_fail(sync_ok);
 
-#if !TARGET_RPI
-    link_ok &= gst_element_link(videorepair1, decoder);
-#endif
-
-    ghost_pad = ghost_pad_and_add_to_bin(depay_sink_pad, receive_output_bin, "sink");
+    sink_pad = gst_element_get_static_pad(bin_elements->data, "sink");
+    ghost_pad = ghost_pad_and_add_to_bin(sink_pad, receive_output_bin, "sink");
     link_res = gst_pad_link(new_pad, ghost_pad);
-    gst_object_unref(depay_sink_pad);
+    gst_object_unref(sink_pad);
     ghost_pad = NULL;
     g_warn_if_fail(link_ok && (link_res == GST_PAD_LINK_OK));
 
-#if !TARGET_RPI
-    sync_ok &= gst_element_sync_state_with_parent(decoder);
-#endif
-    if (parser)
-        sync_ok &= gst_element_sync_state_with_parent(parser);
-    sync_ok &= gst_element_sync_state_with_parent(videorepair1);
-    sync_ok &= gst_element_sync_state_with_parent(rtpdepay);
-    g_warn_if_fail(sync_ok);
-
-#if !TARGET_RPI
-    pad = gst_element_get_static_pad(decoder, "src");
-#else
-    pad = gst_element_get_static_pad(videorepair1, "src");
-#endif
+    pad = gst_element_get_static_pad(current->data, "src");
     g_snprintf(name, OWR_OBJECT_NAME_LENGTH_MAX, "video_src_%u_%u", codec_type, session_id);
     add_pads_to_bin_and_transport_bin(pad, receive_output_bin, transport_agent->priv->transport_bin, name);
     gst_object_unref(pad);
