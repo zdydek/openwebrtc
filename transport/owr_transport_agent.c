@@ -816,10 +816,7 @@ static void handle_new_send_source(OwrTransportAgent *transport_agent,
         return;
     }
 
-    /* FIXME - communicate what codec types are supported by the source
-     * and if one is reusable, use it, else raw?
     g_object_get(send_payload, "codec-type", &codec_type, NULL);
-    */
 
     caps = _owr_payload_create_raw_caps(send_payload);
     src = _owr_media_source_request_source(send_source, caps);
@@ -2175,6 +2172,7 @@ static void handle_new_send_payload(OwrTransportAgent *transport_agent, OwrMedia
     gboolean link_ok = TRUE, sync_ok = TRUE;
     GstPad *sink_pad = NULL, *rtp_sink_pad = NULL, *rtp_capsfilter_src_pad = NULL,
         *ghost_src_pad = NULL, *encoder_sink_pad;
+    OwrCodecType codec_type = OWR_CODEC_TYPE_NONE;
     OwrMediaType media_type;
     guint send_ssrc = 0;
     gchar *cname = NULL;
@@ -2205,7 +2203,7 @@ static void handle_new_send_payload(OwrTransportAgent *transport_agent, OwrMedia
 
     link_rtpbin_to_send_output_bin(transport_agent, stream_id, TRUE, TRUE);
 
-    g_object_get(payload, "media-type", &media_type, NULL);
+    g_object_get(payload, "media-type", &media_type, "codec-type", &codec_type, NULL);
 
     name = g_strdup_printf("send-rtp-capsfilter-%u", stream_id);
     rtp_capsfilter = gst_element_factory_make("capsfilter", name);
@@ -2311,7 +2309,7 @@ static void handle_new_send_payload(OwrTransportAgent *transport_agent, OwrMedia
     g_warn_if_fail(sync_ok);
 
     name = g_strdup_printf("%s_sink_%u_%u", media_type == OWR_MEDIA_TYPE_VIDEO ? "video" : "audio",
-        OWR_CODEC_TYPE_NONE, stream_id);
+        codec_type, stream_id);
     sink_pad = gst_element_get_static_pad(bin_elements->data, "sink");
     add_pads_to_bin_and_transport_bin(sink_pad, send_input_bin,
         transport_agent->priv->transport_bin, name);
@@ -2472,7 +2470,7 @@ static void on_transport_bin_pad_added(GstElement *transport_bin, GstPad *new_pa
         sscanf(new_pad_name, "video_src_%u_%u", &codec_type, &stream_id);
     }
 
-    if (media_type != OWR_MEDIA_TYPE_UNKNOWN && codec_type == OWR_CODEC_TYPE_NONE)
+    if (media_type != OWR_MEDIA_TYPE_UNKNOWN)
         signal_incoming_source(media_type, transport_agent, stream_id, codec_type);
 
     g_free(new_pad_name);
@@ -2557,7 +2555,7 @@ static void setup_video_receive_elements(GstPad *new_pad, guint32 session_id, Ow
 #endif
     GstPadLinkReturn link_res;
     gboolean link_ok = TRUE;
-    OwrCodecType codec_type;
+    OwrCodecType codec_type = OWR_CODEC_TYPE_NONE;
     gchar name[100];
     GstPad *pad;
     SessionData *session_data;
@@ -2623,8 +2621,7 @@ static void setup_video_receive_elements(GstPad *new_pad, guint32 session_id, Ow
 #else
     pad = gst_element_get_static_pad(videorepair1, "src");
 #endif
-    g_snprintf(name, OWR_OBJECT_NAME_LENGTH_MAX, "video_src_%u_%u", OWR_CODEC_TYPE_NONE,
-        session_id);
+    g_snprintf(name, OWR_OBJECT_NAME_LENGTH_MAX, "video_src_%u_%u", codec_type, session_id);
     add_pads_to_bin_and_transport_bin(pad, receive_output_bin, transport_agent->priv->transport_bin, name);
     gst_object_unref(pad);
 }
