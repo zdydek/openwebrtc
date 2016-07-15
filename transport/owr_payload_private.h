@@ -38,8 +38,6 @@ G_BEGIN_DECLS
 
 /*< private >*/
 GstElement * _owr_payload_create_encoder(OwrPayload *payload);
-GstElement * _owr_payload_create_decoder(OwrPayload *payload);
-GstElement * _owr_payload_create_parser(OwrPayload *payload);
 GstElement * _owr_payload_create_payload_packetizer(OwrPayload *payload);
 GstElement * _owr_payload_create_payload_depacketizer(OwrPayload *payload);
 OwrMediaType _owr_payload_get_media_type(OwrPayload *payload);

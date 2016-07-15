@@ -2261,7 +2261,7 @@ static void handle_new_send_payload(OwrTransportAgent *transport_agent, OwrMedia
                          "max-size-time", G_GUINT64_CONSTANT(0), NULL);
 
             encoder = _owr_payload_create_encoder(payload);
-            parser = _owr_payload_create_parser(payload);
+            parser = _owr_create_parser(_owr_payload_get_codec_type(payload));
 
             g_warn_if_fail(encoder);
 
@@ -2284,7 +2284,7 @@ static void handle_new_send_payload(OwrTransportAgent *transport_agent, OwrMedia
         }
     } else { /* Audio */
         encoder = _owr_payload_create_encoder(payload);
-        parser = _owr_payload_create_parser(payload);
+        parser = _owr_create_parser(_owr_payload_get_codec_type(payload));
 
         encoder_sink_pad = gst_element_get_static_pad(encoder, "sink");
         g_signal_connect(encoder_sink_pad, "notify::caps", G_CALLBACK(on_caps), OWR_SESSION(media_session));
@@ -2585,9 +2585,9 @@ static void setup_video_receive_elements(GstPad *new_pad, guint32 session_id, Ow
     pad = NULL;
 
     g_object_get(payload, "codec-type", &codec_type, NULL);
-    parser = _owr_payload_create_parser(payload);
+    parser = _owr_create_parser(_owr_payload_get_codec_type(payload));
 #if !TARGET_RPI
-    decoder = _owr_payload_create_decoder(payload);
+    decoder = _owr_create_decoder(_owr_payload_get_codec_type(payload));
     gst_bin_add(GST_BIN(receive_output_bin), decoder);
 #endif
     gst_bin_add_many(GST_BIN(receive_output_bin), rtpdepay,
@@ -2657,8 +2657,8 @@ static void setup_audio_receive_elements(GstPad *new_pad, guint32 session_id, Ow
 
     rtpdepay = _owr_payload_create_payload_depacketizer(payload);
 
-    parser = _owr_payload_create_parser(payload);
-    decoder = _owr_payload_create_decoder(payload);
+    parser = _owr_create_parser(_owr_payload_get_codec_type(payload));
+    decoder = _owr_create_decoder(_owr_payload_get_codec_type(payload));
 
     gst_bin_add_many(GST_BIN(receive_output_bin), rtp_capsfilter, rtpdepay,
         decoder, NULL);

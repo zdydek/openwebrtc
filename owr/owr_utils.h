@@ -42,7 +42,15 @@ G_BEGIN_DECLS
 #define _owr_codec_type_is_raw(codec_type) (codec_type == OWR_CODEC_TYPE_NONE)
 
 void *_owr_require_symbols(void);
+guint _owr_get_unique_uint_id();
 OwrCodecType _owr_caps_to_codec_type(GstCaps *caps);
+gpointer _owr_detect_codecs(gpointer data);
+const GList *_owr_get_detected_h264_encoders();
+const GList *_owr_get_detected_vp8_encoders();
+GstElement *_owr_try_codecs(const GList *codecs, const gchar *name_prefix);
+GstElement *_owr_create_decoder(OwrCodecType codec_type);
+GstElement *_owr_create_parser(OwrCodecType codec_type);
+const gchar* _owr_get_encoder_name(OwrCodecType codec_type);
 void _owr_utils_call_closure_with_list(GClosure *callback, GList *list);
 GClosure *_owr_utils_list_closure_merger_new(GClosure *final_callback,
     GCopyFunc list_item_copy,
