@@ -2177,7 +2177,7 @@ static void handle_new_send_payload(OwrTransportAgent *transport_agent, OwrMedia
     guint send_ssrc = 0;
     gchar *cname = NULL;
     OwrMediaSource *media_source = NULL;
-    GList *bin_elements, *current;
+    GstElement *first = NULL;
 
     g_return_if_fail(transport_agent);
     g_return_if_fail(media_session);
@@ -2297,20 +2297,12 @@ static void handle_new_send_payload(OwrTransportAgent *transport_agent, OwrMedia
     g_assert(payloader);
     gst_bin_add_many(GST_BIN(send_input_bin), payloader, rtp_capsfilter, NULL);
 
-    bin_elements = g_list_last(GST_BIN(send_input_bin)->children);
-    g_assert(bin_elements);
-    for (current = bin_elements; current && current->prev && link_ok && sync_ok; current = g_list_previous(current)) {
-        link_ok &= gst_element_link(current->data, current->prev->data);
-        sync_ok &= gst_element_sync_state_with_parent(current->data);
-    }
-    g_warn_if_fail(link_ok);
-    if (link_ok && sync_ok && current && !current->prev)
-        sync_ok &= gst_element_sync_state_with_parent(current->data);
-    g_warn_if_fail(sync_ok);
+    _owr_bin_link_and_sync_elements(GST_BIN(send_input_bin), &link_ok, &sync_ok, &first, NULL);
+    g_warn_if_fail(link_ok && sync_ok);
 
     name = g_strdup_printf("%s_sink_%u_%u", media_type == OWR_MEDIA_TYPE_VIDEO ? "video" : "audio",
         codec_type, stream_id);
-    sink_pad = gst_element_get_static_pad(bin_elements->data, "sink");
+    sink_pad = gst_element_get_static_pad(first, "sink");
     add_pads_to_bin_and_transport_bin(sink_pad, send_input_bin,
         transport_agent->priv->transport_bin, name);
     gst_object_unref(sink_pad);
@@ -2556,7 +2548,7 @@ static void setup_video_receive_elements(GstPad *new_pad, guint32 session_id, Ow
     gchar name[100];
     GstPad *pad;
     SessionData *session_data;
-    GList *bin_elements, *current;
+    GstElement *first = NULL, *last = NULL;
 
     g_snprintf(name, OWR_OBJECT_NAME_LENGTH_MAX, "receive-output-bin-%u", session_id);
     receive_output_bin = gst_bin_new(name);
@@ -2588,25 +2580,17 @@ static void setup_video_receive_elements(GstPad *new_pad, guint32 session_id, Ow
     gst_object_unref(pad);
     pad = NULL;
 
-    bin_elements = g_list_last(GST_BIN(receive_output_bin)->children);
-    g_assert(bin_elements);
-    for (current = bin_elements; current && current->prev && link_ok && sync_ok; current = g_list_previous(current)) {
-        link_ok &= gst_element_link(current->data, current->prev->data);
-        sync_ok &= gst_element_sync_state_with_parent(current->data);
-    }
-    g_warn_if_fail(link_ok);
-    if (link_ok && sync_ok && current && !current->prev)
-        sync_ok &= gst_element_sync_state_with_parent(current->data);
-    g_warn_if_fail(sync_ok);
+    _owr_bin_link_and_sync_elements(GST_BIN(receive_output_bin), &link_ok, &sync_ok, &first, &last);
+    g_warn_if_fail(link_ok && sync_ok);
 
-    sink_pad = gst_element_get_static_pad(bin_elements->data, "sink");
+    sink_pad = gst_element_get_static_pad(first, "sink");
     ghost_pad = ghost_pad_and_add_to_bin(sink_pad, receive_output_bin, "sink");
     link_res = gst_pad_link(new_pad, ghost_pad);
     gst_object_unref(sink_pad);
     ghost_pad = NULL;
-    g_warn_if_fail(link_ok && (link_res == GST_PAD_LINK_OK));
+    g_warn_if_fail(link_res == GST_PAD_LINK_OK);
 
-    pad = gst_element_get_static_pad(current->data, "src");
+    pad = gst_element_get_static_pad(last, "src");
     g_snprintf(name, OWR_OBJECT_NAME_LENGTH_MAX, "video_src_%u_%u", codec_type, session_id);
     add_pads_to_bin_and_transport_bin(pad, receive_output_bin, transport_agent->priv->transport_bin, name);
     gst_object_unref(pad);

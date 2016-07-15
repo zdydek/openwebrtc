@@ -51,6 +51,7 @@ GstElement *_owr_try_codecs(const GList *codecs, const gchar *name_prefix);
 GstElement *_owr_create_decoder(OwrCodecType codec_type);
 GstElement *_owr_create_parser(OwrCodecType codec_type);
 const gchar* _owr_get_encoder_name(OwrCodecType codec_type);
+void _owr_bin_link_and_sync_elements(GstBin *bin, gboolean *out_link_ok, gboolean *out_sync_ok, GstElement **out_first, GstElement **out_last);
 void _owr_utils_call_closure_with_list(GClosure *callback, GList *list);
 GClosure *_owr_utils_list_closure_merger_new(GClosure *final_callback,
     GCopyFunc list_item_copy,

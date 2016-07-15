@@ -359,8 +359,9 @@ static void owr_video_renderer_reconfigure_element(OwrMediaRenderer *renderer)
     GstElement *upload, *sink, *flip = NULL;
     GstPad *ghostpad, *sinkpad;
     OwrMediaSource *source;
-    GList *bin_elements, *current;
     OwrCodecType codec_type;
+    gboolean link_ok = TRUE;
+    GstElement *first = NULL;
 
     g_assert(OWR_IS_VIDEO_RENDERER(renderer));
     video_renderer = OWR_VIDEO_RENDERER(renderer);
@@ -417,11 +418,9 @@ static void owr_video_renderer_reconfigure_element(OwrMediaRenderer *renderer)
     g_object_set(sink, "enable-last-sample", FALSE, "sync", FALSE, NULL);
     gst_bin_add(GST_BIN(priv->renderer_bin), sink);
 
-    bin_elements = g_list_last(GST_BIN(priv->renderer_bin)->children);
-    g_assert(bin_elements);
-    for (current = bin_elements; current && current->prev; current = g_list_previous(current))
-        LINK_ELEMENTS(current->data, current->prev->data);
-    sinkpad = gst_element_get_static_pad(bin_elements->data, "sink");
+    _owr_bin_link_and_sync_elements(GST_BIN(priv->renderer_bin), &link_ok, NULL, &first, NULL);
+    g_warn_if_fail(link_ok);
+    sinkpad = gst_element_get_static_pad(first, "sink");
 
     g_assert(sinkpad);
     ghostpad = gst_ghost_pad_new("sink", sinkpad);

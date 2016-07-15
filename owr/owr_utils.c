@@ -213,6 +213,38 @@ const gchar* _owr_get_encoder_name(OwrCodecType codec_type)
     return OwrCodecTypeEncoderElementName[codec_type];
 }
 
+void _owr_bin_link_and_sync_elements(GstBin *bin, gboolean *out_link_ok, gboolean *out_sync_ok, GstElement **out_first, GstElement **out_last)
+{
+    GList *bin_elements, *current;
+    gboolean link_ok = TRUE, sync_ok = TRUE;
+
+    g_assert(bin);
+
+    bin_elements = g_list_last(bin->children);
+    g_assert(bin_elements);
+    for (current = bin_elements; current && current->prev && link_ok && sync_ok; current = g_list_previous(current)) {
+        if (out_link_ok)
+            link_ok &= gst_element_link(current->data, current->prev->data);
+        if (out_sync_ok)
+            sync_ok &= gst_element_sync_state_with_parent(current->data);
+    }
+    if (out_sync_ok && link_ok && sync_ok && current && !current->prev)
+        sync_ok &= gst_element_sync_state_with_parent(current->data);
+
+    if (out_link_ok)
+        *out_link_ok = link_ok;
+
+    if (out_sync_ok)
+        *out_sync_ok = sync_ok;
+
+    if (link_ok && sync_ok) {
+        if (out_first)
+            *out_first = bin_elements->data;
+        if (out_last)
+            *out_last = current->data;
+    }
+}
+
 typedef struct {
     GClosure *callback;
     GList *list;
