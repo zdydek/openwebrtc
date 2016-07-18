@@ -44,6 +44,7 @@ G_BEGIN_DECLS
 void *_owr_require_symbols(void);
 guint _owr_get_unique_uint_id();
 OwrCodecType _owr_caps_to_codec_type(GstCaps *caps);
+const gchar* _owr_codec_type_to_caps_mime(OwrMediaType media_type, OwrCodecType codec_type);
 gpointer _owr_detect_codecs(gpointer data);
 const GList *_owr_get_detected_h264_encoders();
 const GList *_owr_get_detected_vp8_encoders();

@@ -76,6 +76,44 @@ OwrCodecType _owr_caps_to_codec_type(GstCaps *caps)
     return OWR_CODEC_TYPE_NONE;
 }
 
+const gchar* _owr_codec_type_to_caps_mime(OwrMediaType media_type, OwrCodecType codec_type)
+{
+    switch (codec_type)
+    {
+    case OWR_CODEC_TYPE_NONE:
+        switch (media_type)
+        {
+        case OWR_MEDIA_TYPE_AUDIO:
+            return "audio/x-raw";
+            break;
+        case OWR_MEDIA_TYPE_VIDEO:
+            return "video/x-raw";
+            break;
+        default:
+            g_return_val_if_reached("audio/x-raw");
+        }
+        break;
+    case OWR_CODEC_TYPE_PCMU:
+        return "audio/x-mulaw";
+        break;
+    case OWR_CODEC_TYPE_PCMA:
+        return "audio/x-alaw";
+        break;
+    case OWR_CODEC_TYPE_OPUS:
+        return "audio/x-opus";
+        break;
+    case OWR_CODEC_TYPE_H264:
+        return "video/x-h264";
+        break;
+    case OWR_CODEC_TYPE_VP8:
+        return "video/x-vp8";
+        break;
+    default:
+        break;
+    }
+    g_return_val_if_reached("audio/x-raw");
+}
+
 gpointer _owr_detect_codecs(gpointer data)
 {
     GList *decoder_factories;
