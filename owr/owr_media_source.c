@@ -625,6 +625,12 @@ void _owr_media_source_set_type(OwrMediaSource *media_source, OwrSourceType type
     g_atomic_int_set(&media_source->priv->type, type);
 }
 
+OwrSourceType _owr_media_source_get_media_type(OwrMediaSource *media_source)
+{
+    g_return_val_if_fail(OWR_IS_MEDIA_SOURCE(media_source), OWR_MEDIA_TYPE_UNKNOWN);
+    return media_source->priv->media_type;
+}
+
 OwrCodecType _owr_media_source_get_codec(OwrMediaSource *media_source)
 {
     g_return_val_if_fail(OWR_IS_MEDIA_SOURCE(media_source), OWR_CODEC_TYPE_NONE);
