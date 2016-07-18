@@ -474,6 +474,7 @@ static GstCaps *owr_video_renderer_get_caps(OwrMediaRenderer *renderer)
     GstCaps *caps;
     guint width = 0, height = 0;
     gdouble max_framerate = 0.0;
+    OwrMediaSource *source;
 
     g_object_get(OWR_VIDEO_RENDERER(renderer),
         "width", &width,
@@ -481,11 +482,9 @@ static GstCaps *owr_video_renderer_get_caps(OwrMediaRenderer *renderer)
         "max-framerate", &max_framerate,
         NULL);
 
-#if TARGET_RPI
-    caps = gst_caps_new_empty_simple("video/x-h264");
-#else
-    caps = gst_caps_new_empty_simple("video/x-raw");
-#endif
+    source = _owr_media_renderer_get_source(renderer);
+    caps = gst_caps_new_empty_simple(_owr_codec_type_to_caps_mime(_owr_media_source_get_media_type(source),
+                                                                  _owr_media_source_get_codec(source)));
     gst_caps_set_features(caps, 0, gst_caps_features_new_any());
     if (width > 0)
         gst_caps_set_simple(caps, "width", G_TYPE_INT, width, NULL);
