@@ -42,13 +42,8 @@ static GList *h264_encoders = NULL;
 static GList *vp8_decoders = NULL;
 static GList *vp8_encoders = NULL;
 
-#if TARGET_RPI
-static const gchar *OwrCodecTypeEncoderElementName[] = { NULL, "mulawenc", "alawenc", "opusenc", "omxh264enc", "omxvp8enc" };
-static const gchar *OwrCodecTypeDecoderElementName[] = { NULL, "mulawdec", "alawdec", "opusdec", "omxh264dec", "omxvp8dec" };
-#else
 static const gchar *OwrCodecTypeEncoderElementName[] = { NULL, "mulawenc", "alawenc", "opusenc", "openh264enc", "vp8enc" };
 static const gchar *OwrCodecTypeDecoderElementName[] = { NULL, "mulawdec", "alawdec", "opusdec", "openh264dec", "vp8dec" };
-#endif
 
 static const gchar *OwrCodecTypeParserElementName[] = { NULL, NULL, NULL, NULL, "h264parse", NULL };
 
