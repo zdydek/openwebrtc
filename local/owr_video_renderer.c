@@ -497,12 +497,6 @@ static GstCaps *owr_video_renderer_get_caps(OwrMediaRenderer *renderer)
         gst_caps_set_simple(caps, "framerate", GST_TYPE_FRACTION, fps_n, fps_d, NULL);
     }
 
-#if TARGET_RPI
-    gst_caps_set_simple(caps, "stream-format", G_TYPE_STRING, "byte-stream",
-                        "alignment", G_TYPE_STRING, "au",
-                        "profile", G_TYPE_STRING, "baseline",
-                        NULL);
-#endif
     return caps;
 }
 
