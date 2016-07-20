@@ -310,8 +310,8 @@ static void update_flip_method(OwrMediaRenderer *renderer, GParamSpec *pspec, Gs
     if (flip) {
         gint flip_method = _owr_rotation_and_mirror_to_video_flip_method(rotation, mirror);
         g_object_set(flip, "method", flip_method, NULL);
-    } else {
 #if TARGET_RPI
+    } else {
         OwrMediaSource* media_source = _owr_media_renderer_get_source(renderer);
         GstElement* src_bin = _owr_media_source_get_source_bin(media_source);
         GstElement* src_element = gst_bin_get_by_name(GST_BIN(src_bin), "video-source");
@@ -357,7 +357,7 @@ static GstElement *owr_video_renderer_get_element(OwrMediaRenderer *renderer, gu
     upload = gst_element_factory_make("glupload", "video-renderer-upload");
     convert = gst_element_factory_make("glcolorconvert", "video-renderer-convert");
 #if !TARGET_RPI
-    balance = gst_element_factory_make("glvideobalance", "video-renderer-balance");
+    balance = gst_element_factory_make("glcolorbalance", "video-renderer-balance");
     g_signal_connect_object(renderer, "notify::disabled", G_CALLBACK(renderer_disabled),
         balance, 0);
     renderer_disabled(renderer, NULL, balance);
@@ -375,9 +375,8 @@ static GstElement *owr_video_renderer_get_element(OwrMediaRenderer *renderer, gu
 #endif
 
     sink = OWR_MEDIA_RENDERER_GET_CLASS(renderer)->get_sink(renderer);
-    g_object_set(sink, "sync", FALSE, NULL);
     g_assert(sink);
-    g_object_set(sink, "enable-last-sample", FALSE, NULL);
+    g_object_set(sink, "enable-last-sample", FALSE, "sync", FALSE, NULL);
     if (priv->tag) {
         GstElement *sink_element = GST_IS_BIN(sink) ?
             gst_bin_get_by_interface(GST_BIN(sink), GST_TYPE_VIDEO_OVERLAY) : sink;

@@ -249,8 +249,7 @@ static gboolean bus_call(GstBus *bus, GstMessage *msg, gpointer user_data)
         g_printerr("Debugging info: %s\n", (debug) ? debug : "none");
 
         g_printerr("==== %s message stop ====\n", message_type);
-        pipeline = _owr_media_source_get_source_bin(media_source);
-        GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline.dot");
+        /*GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(pipeline), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline.dot");*/
 
         if (!is_warning) {
             OWR_POST_ERROR(media_source, PROCESSING_ERROR, NULL);
@@ -637,7 +636,6 @@ static GstElement *owr_local_media_source_request_source(OwrMediaSource *media_s
 
                 if (gst_caps_is_empty(device_caps)) {
                     /* Accepting any format didn't work, we're going to hope that scaling fixes it */
-                    g_printerr("oops\n");
                     CREATE_ELEMENT(source_process, "videoscale", "video-source-scale");
                     gst_bin_add(GST_BIN(source_pipeline), source_process);
                 }
