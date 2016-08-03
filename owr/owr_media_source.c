@@ -393,8 +393,6 @@ static GstElement *owr_media_source_request_source_default(OwrMediaSource *media
     gst_pad_set_active(bin_pad, TRUE);
     gst_element_add_pad(source_bin, bin_pad);
 
-    LINK_ELEMENTS(source, queue_pre);
-
 done:
 
     gst_object_unref(source_pipeline);
