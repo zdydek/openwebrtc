@@ -892,12 +892,20 @@ static void remove_existing_send_source_and_payload(OwrTransportAgent *transport
     OwrMediaType media_type = OWR_MEDIA_TYPE_UNKNOWN;
     GHashTable *event_data;
     GValue *value;
+    OwrPayload *send_payload;
+    OwrCodecType codec_type = OWR_CODEC_TYPE_NONE;
 
     g_assert(media_source);
 
     event_data = _owr_value_table_new();
     value = _owr_value_table_add(event_data, "start_time", G_TYPE_INT64);
     g_value_set_int64(value, g_get_monotonic_time());
+
+    send_payload = _owr_media_session_get_send_payload(media_session);
+    if (send_payload) {
+        g_object_get(send_payload, "codec-type", &codec_type, NULL);
+        g_object_unref(send_payload);
+    }
 
     /* Setting a new, different source but have one already */
 
@@ -907,7 +915,7 @@ static void remove_existing_send_source_and_payload(OwrTransportAgent *transport
     g_object_get(media_source, "media-type", &media_type, NULL);
     g_warn_if_fail(media_type != OWR_MEDIA_TYPE_UNKNOWN);
     if (media_type == OWR_MEDIA_TYPE_VIDEO)
-        pad_name = g_strdup_printf("video_sink_%u_%u", OWR_CODEC_TYPE_NONE, stream_id);
+        pad_name = g_strdup_printf("video_sink_%u_%u", codec_type, stream_id);
     else
         pad_name = g_strdup_printf("audio_raw_sink_%u", stream_id);
     sinkpad = gst_element_get_static_pad(transport_agent->priv->transport_bin, pad_name);
