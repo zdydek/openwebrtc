@@ -121,6 +121,8 @@ struct _OwrMediaSourcePrivate {
     GstElement *source_bin;
     /* Tee element from which we can tap the source for multiple consumers */
     GstElement *source_tee;
+
+    OwrMediaSourceSupportedInterfaces supported_interfaces;
 };
 
 static void owr_media_source_set_property(GObject *object, guint property_id,
@@ -197,6 +199,7 @@ static void owr_media_source_init(OwrMediaSource *source)
 
     priv->source_bin = NULL;
     priv->source_tee = NULL;
+    priv->supported_interfaces = OWR_MEDIA_SOURCE_SUPPORTS_NONE;
 
     g_mutex_init(&source->lock);
 }
@@ -261,7 +264,6 @@ static void owr_media_source_get_property(GObject *object, guint property_id,
  */
 static GstElement *owr_media_source_request_source_default(OwrMediaSource *media_source, GstCaps *caps)
 {
-    OwrMediaType media_type;
     GstElement *source_pipeline, *tee;
     GstElement *source_bin, *source = NULL, *queue_pre, *queue_post;
     GstElement *capsfilter;
@@ -270,6 +272,8 @@ static GstElement *owr_media_source_request_source_default(OwrMediaSource *media
     gchar *bin_name;
     guint source_id;
     gchar *sink_name, *source_name;
+    GstElement *last = NULL;
+    gboolean link_ok = TRUE;
 
     g_return_val_if_fail(media_source->priv->source_bin, NULL);
     g_return_val_if_fail(media_source->priv->source_tee, NULL);
@@ -283,100 +287,78 @@ static GstElement *owr_media_source_request_source_default(OwrMediaSource *media
     source_bin = gst_bin_new(bin_name);
     g_free(bin_name);
 
+    source_name = g_strdup_printf("source-%u", source_id);
+    source = g_object_new(OWR_TYPE_INTER_SRC, "name", source_name, NULL);
+    g_free(source_name);
     CREATE_ELEMENT_WITH_ID(queue_pre, "queue", "source-queue", source_id);
     CREATE_ELEMENT_WITH_ID(capsfilter, "capsfilter", "source-output-capsfilter", source_id);
-    CREATE_ELEMENT_WITH_ID(queue_post, "queue", "source-output-queue", source_id);
+    g_object_set(capsfilter, "caps", caps, NULL);
+    gst_bin_add_many(GST_BIN(source_bin), source, queue_pre, capsfilter, NULL);
 
     CREATE_ELEMENT_WITH_ID(sink_queue, "queue", "sink-queue", source_id);
 
-    g_object_get(media_source, "media-type", &media_type, NULL);
-    switch (media_type) {
+    switch (media_source->priv->media_type) {
     case OWR_MEDIA_TYPE_AUDIO:
         {
         GstElement *audioresample, *audioconvert;
 
-        g_object_set(capsfilter, "caps", caps, NULL);
+        CREATE_ELEMENT_WITH_ID(queue_post, "queue", "source-output-queue", source_id);
 
         CREATE_ELEMENT_WITH_ID(audioresample, "audioresample", "source-audio-resample", source_id);
         CREATE_ELEMENT_WITH_ID(audioconvert, "audioconvert", "source-audio-convert", source_id);
 
-        gst_bin_add_many(GST_BIN(source_bin),
-            queue_pre, audioconvert, audioresample, capsfilter, queue_post, NULL);
-        LINK_ELEMENTS(capsfilter, queue_post);
-        LINK_ELEMENTS(audioresample, capsfilter);
-        LINK_ELEMENTS(audioconvert, audioresample);
-        LINK_ELEMENTS(queue_pre, audioconvert);
+        gst_bin_add_many(GST_BIN(source_bin), audioconvert, audioresample, NULL);
 
         break;
         }
     case OWR_MEDIA_TYPE_VIDEO:
-        {
-        GstElement *videorate = NULL, *videoscale = NULL, *videoconvert;
-        GstStructure *s;
-        GstCapsFeatures *features;
+        if (_owr_codec_type_is_raw(_owr_media_source_get_codec(media_source))) {
+            GstElement *videorate = NULL, *videoscale = NULL, *videoconvert;
+            GstStructure *s;
+            GstCapsFeatures *features;
+            GstElement *glload;
 
-        s = gst_caps_get_structure(caps, 0);
-        if (gst_structure_has_field(s, "framerate")) {
-            gint fps_n = 0, fps_d = 0;
+            s = gst_caps_get_structure(caps, 0);
+            if (gst_structure_has_field(s, "framerate")) {
+                gint fps_n = 0, fps_d = 0;
 
-            gst_structure_get_fraction(s, "framerate", &fps_n, &fps_d);
-            g_assert(fps_d);
+                gst_structure_get_fraction(s, "framerate", &fps_n, &fps_d);
+                g_assert(fps_d);
 
-            CREATE_ELEMENT_WITH_ID(videorate, "videorate", "source-video-rate", source_id);
-            g_object_set(videorate, "drop-only", TRUE, "max-rate", fps_n / fps_d, NULL);
+                CREATE_ELEMENT_WITH_ID(videorate, "videorate", "source-video-rate", source_id);
+                g_object_set(videorate, "drop-only", TRUE, "max-rate", fps_n / fps_d, NULL);
 
-            gst_structure_remove_field(s, "framerate");
-            gst_bin_add(GST_BIN(source_bin), videorate);
-        }
-        g_object_set(capsfilter, "caps", caps, NULL);
-
-        features = gst_caps_get_features(caps, 0);
-        if (gst_caps_features_contains(features, GST_CAPS_FEATURE_MEMORY_GL_MEMORY)) {
-            GstElement *glupload;
-
-            CREATE_ELEMENT_WITH_ID(glupload, "glupload", "source-glupload", source_id);
-            CREATE_ELEMENT_WITH_ID(videoconvert, "glcolorconvert", "source-glcolorconvert", source_id);
-            gst_bin_add_many(GST_BIN(source_bin),
-                    queue_pre, glupload, videoconvert, capsfilter, queue_post, NULL);
-
-            if (videorate) {
-                LINK_ELEMENTS(queue_pre, videorate);
-                LINK_ELEMENTS(videorate, glupload);
-            } else {
-                LINK_ELEMENTS(queue_pre, glupload);
+                gst_structure_remove_field(s, "framerate");
+                gst_bin_add(GST_BIN(source_bin), videorate);
             }
-            LINK_ELEMENTS(glupload, videoconvert);
-        } else {
-            GstElement *gldownload;
 
-            CREATE_ELEMENT_WITH_ID(gldownload, "gldownload", "source-gldownload", source_id);
-            CREATE_ELEMENT_WITH_ID(videoscale,  "videoscale", "source-video-scale", source_id);
-            CREATE_ELEMENT_WITH_ID(videoconvert, VIDEO_CONVERT, "source-video-convert", source_id);
-            gst_bin_add_many(GST_BIN(source_bin),
-                    queue_pre, gldownload, videoscale, videoconvert, capsfilter, queue_post, NULL);
-            if (videorate) {
-                LINK_ELEMENTS(queue_pre, videorate);
-                LINK_ELEMENTS(videorate, gldownload);
+            features = gst_caps_get_features(caps, 0);
+            if (gst_caps_features_contains(features, GST_CAPS_FEATURE_MEMORY_GL_MEMORY)) {
+                CREATE_ELEMENT_WITH_ID(glload, "glupload", "source-glupload", source_id);
+                CREATE_ELEMENT_WITH_ID(videoconvert, "glcolorconvert", "source-glcolorconvert", source_id);
+                gst_bin_add_many(GST_BIN(source_bin),
+                    glload, videoconvert, NULL);
             } else {
-                LINK_ELEMENTS(queue_pre, gldownload);
+                CREATE_ELEMENT_WITH_ID(glload, "gldownload", "source-gldownload", source_id);
+                CREATE_ELEMENT_WITH_ID(videoscale,  "videoscale", "source-video-scale", source_id);
+                CREATE_ELEMENT_WITH_ID(videoconvert, VIDEO_CONVERT, "source-video-convert", source_id);
+                gst_bin_add_many(GST_BIN(source_bin),
+                    glload, videoscale, videoconvert, NULL);
             }
-            LINK_ELEMENTS(gldownload, videoscale);
-            LINK_ELEMENTS(videoscale, videoconvert);
-        }
-        LINK_ELEMENTS(videoconvert, capsfilter);
-        LINK_ELEMENTS(capsfilter, queue_post);
 
+            CREATE_ELEMENT_WITH_ID(queue_post, "queue", "source-output-queue", source_id);
+            gst_bin_add(GST_BIN(source_bin), queue_post);
+        }
         break;
-        }
     case OWR_MEDIA_TYPE_UNKNOWN:
     default:
         g_assert_not_reached();
         goto done;
     }
 
-    source_name = g_strdup_printf("source-%u", source_id);
-    source = g_object_new(OWR_TYPE_INTER_SRC, "name", source_name, NULL);
-    g_free(source_name);
+    _owr_bin_link_and_sync_elements(GST_BIN(source_bin), &link_ok, NULL, NULL, &last);
+    g_warn_if_fail(link_ok);
+    srcpad = gst_element_get_static_pad(last, "src");
 
     sink_name = g_strdup_printf("sink-%u", source_id);
     sink = g_object_new(OWR_TYPE_INTER_SINK, "name", sink_name, NULL);
@@ -404,7 +386,6 @@ static GstElement *owr_media_source_request_source_default(OwrMediaSource *media
     LINK_ELEMENTS(tee, sink_bin);
 
     /* Start up our new bin and link it all */
-    srcpad = gst_element_get_static_pad(queue_post, "src");
     g_assert(srcpad);
 
     bin_pad = gst_ghost_pad_new("src", srcpad);
@@ -412,7 +393,6 @@ static GstElement *owr_media_source_request_source_default(OwrMediaSource *media
     gst_pad_set_active(bin_pad, TRUE);
     gst_element_add_pad(source_bin, bin_pad);
 
-    gst_bin_add(GST_BIN(source_bin), source);
     LINK_ELEMENTS(source, queue_pre);
 
 done:
@@ -615,6 +595,12 @@ void _owr_media_source_set_type(OwrMediaSource *media_source, OwrSourceType type
     g_atomic_int_set(&media_source->priv->type, type);
 }
 
+OwrSourceType _owr_media_source_get_media_type(OwrMediaSource *media_source)
+{
+    g_return_val_if_fail(OWR_IS_MEDIA_SOURCE(media_source), OWR_MEDIA_TYPE_UNKNOWN);
+    return media_source->priv->media_type;
+}
+
 OwrCodecType _owr_media_source_get_codec(OwrMediaSource *media_source)
 {
     g_return_val_if_fail(OWR_IS_MEDIA_SOURCE(media_source), OWR_CODEC_TYPE_NONE);
@@ -640,4 +626,16 @@ gchar * owr_media_source_get_dot_data(OwrMediaSource *source)
 #else
     return g_strdup("");
 #endif
+}
+
+void _owr_media_source_set_supported_interfaces(OwrMediaSource *source, OwrMediaSourceSupportedInterfaces interfaces)
+{
+    g_return_if_fail(OWR_IS_MEDIA_SOURCE(source));
+    source->priv->supported_interfaces = interfaces;
+}
+
+gboolean _owr_media_source_supports_interfaces(OwrMediaSource *source, OwrMediaSourceSupportedInterfaces interfaces)
+{
+    g_return_val_if_fail(OWR_IS_MEDIA_SOURCE(source), FALSE);
+    return source->priv->supported_interfaces & interfaces;
 }
