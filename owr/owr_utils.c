@@ -423,7 +423,7 @@ void _owr_deep_notify(GObject *object, GstObject *orig,
     g_free(path);
 }
 
-static int _owr_rotation_and_mirror_to_video_flip_method(guint rotation, gboolean mirror)
+static int _owr_rotation_and_mirror_to_video_direction_value(guint rotation, gboolean mirror)
 {
 #if defined(__ANDROID__) || (defined(__APPLE__) && TARGET_OS_IPHONE)
     static gint method_table[] = {2, 3, 0, 1, 4, 7, 5, 6};
@@ -443,13 +443,13 @@ void _owr_update_flip_method(GObject *source, GParamSpec *pspec, GstElement *fli
 {
     guint rotation = 0;
     gboolean mirror = FALSE;
-    gint flip_method;
+    gint video_direction_value;
 
     g_assert(GST_IS_ELEMENT(flip));
 
     g_object_get(source, "rotation", &rotation, "mirror", &mirror, NULL);
-    flip_method = _owr_rotation_and_mirror_to_video_flip_method(rotation, mirror);
-    g_object_set(flip, pspec ? pspec->name : "method", flip_method, NULL);
+    video_direction_value = _owr_rotation_and_mirror_to_video_direction_value(rotation, mirror);
+    g_object_set(flip, pspec ? pspec->name : "method", video_direction_value, NULL);
 }
 
 static void value_slice_free(gpointer value)
