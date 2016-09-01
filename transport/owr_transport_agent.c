@@ -64,6 +64,7 @@
 #include <gst/app/gstappsink.h>
 #include <gst/app/gstappsrc.h>
 #include <gst/gst.h>
+#include <gst/video/video.h>
 #include <gst/rtp/gstrtcpbuffer.h>
 #include <gst/rtp/gstrtpbuffer.h>
 #include <gst/rtp/gstrtpdefs.h>
@@ -892,12 +893,20 @@ static void remove_existing_send_source_and_payload(OwrTransportAgent *transport
     OwrMediaType media_type = OWR_MEDIA_TYPE_UNKNOWN;
     GHashTable *event_data;
     GValue *value;
+    OwrPayload *send_payload;
+    OwrCodecType codec_type = OWR_CODEC_TYPE_NONE;
 
     g_assert(media_source);
 
     event_data = _owr_value_table_new();
     value = _owr_value_table_add(event_data, "start_time", G_TYPE_INT64);
     g_value_set_int64(value, g_get_monotonic_time());
+
+    send_payload = _owr_media_session_get_send_payload(media_session);
+    if (send_payload) {
+        g_object_get(send_payload, "codec-type", &codec_type, NULL);
+        g_object_unref(send_payload);
+    }
 
     /* Setting a new, different source but have one already */
 
@@ -907,7 +916,7 @@ static void remove_existing_send_source_and_payload(OwrTransportAgent *transport
     g_object_get(media_source, "media-type", &media_type, NULL);
     g_warn_if_fail(media_type != OWR_MEDIA_TYPE_UNKNOWN);
     if (media_type == OWR_MEDIA_TYPE_VIDEO)
-        pad_name = g_strdup_printf("video_sink_%u_%u", OWR_CODEC_TYPE_NONE, stream_id);
+        pad_name = g_strdup_printf("video_sink_%u_%u", codec_type, stream_id);
     else
         pad_name = g_strdup_printf("audio_raw_sink_%u", stream_id);
     sinkpad = gst_element_get_static_pad(transport_agent->priv->transport_bin, pad_name);
@@ -2537,6 +2546,18 @@ static GstPadProbeReturn check_for_keyframe(GstPad *pad, GstPadProbeInfo *info,
     return GST_PAD_PROBE_OK;
 }
 
+#if TARGET_RPI
+static gboolean force_key_unit_event(gpointer data)
+{
+  GstElement* videorepair = (GstElement*) data;
+  GstPad* sink_pad = gst_element_get_static_pad(videorepair, "sink");
+  gst_pad_push_event(sink_pad, gst_video_event_new_upstream_force_key_unit(GST_CLOCK_TIME_NONE, FALSE, 0));
+  gst_object_unref(sink_pad);
+  gst_object_unref(videorepair);
+  return G_SOURCE_REMOVE;
+}
+#endif
+
 static void setup_video_receive_elements(GstPad *new_pad, guint32 session_id, OwrPayload *payload, OwrTransportAgent *transport_agent)
 {
     GstPad *sink_pad = NULL, *ghost_pad = NULL;
@@ -2580,6 +2601,13 @@ static void setup_video_receive_elements(GstPad *new_pad, guint32 session_id, Ow
         session_data, session_data_free);
     gst_object_unref(pad);
     pad = NULL;
+
+#if TARGET_RPI
+    // The OMX video decoder doesn't seem to handle very well the incoming
+    // streams from Chrome, not taking into account the first intra frame
+    // received. So for now, force a PLI request towards the sender after 250ms.
+    g_timeout_add(250, force_key_unit_event, gst_object_ref(videorepair1));
+#endif
 
     _owr_bin_link_and_sync_elements(GST_BIN(receive_output_bin), &link_ok, &sync_ok, &first, &last);
     g_warn_if_fail(link_ok && sync_ok);

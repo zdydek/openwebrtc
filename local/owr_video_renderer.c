@@ -318,7 +318,7 @@ static void update_flip_method(OwrMediaRenderer *renderer, GParamSpec *pspec, Gs
             flip = gst_bin_get_by_name(GST_BIN(bin), "video-source");
             g_assert(flip);
 
-            pspec = g_object_class_find_property(G_OBJECT_GET_CLASS(flip), "orientation");
+            pspec = g_object_class_find_property(G_OBJECT_GET_CLASS(flip), "video-direction");
 
             // For simplicity, and considering that we already assume
             // with the parameter that the object is alive, we can
