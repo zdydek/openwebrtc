@@ -16,6 +16,7 @@ AM_CFLAGS = \
 bin_PROGRAMS = \
     list-devices \
     test-self-view \
+    test-client \
     test-send-receive \
     test-data-channel \
     test-init \
@@ -43,11 +44,7 @@ test_gst_io_LDADD = \
     $(top_builddir)/gst/libopenwebrtc_gst.la
 endif
 
-if HAVE_JSON_GLIB
-bin_PROGRAMS += \
-    test-client
-
-test_client_SOURCES = test_client.c
+test_client_SOURCES = test_client.c test_utils.c
 
 test_client_CFLAGS = \
     $(AM_CFLAGS) \
@@ -62,7 +59,6 @@ test_client_LDADD = \
     $(LIBSOUP_LIBS) \
     $(GLIB_LIBS) \
     $(top_builddir)/owr/libopenwebrtc.la
-endif
 
 list_devices_SOURCES = list_devices.c
 

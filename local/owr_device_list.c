@@ -387,6 +387,8 @@ static gboolean enumerate_video_source_devices(GClosure *callback)
         OWR_MEDIA_SOURCE_SUPPORTS_VIDEO_ORIENTATION | OWR_MEDIA_SOURCE_SUPPORTS_COLOR_BALANCE);
     _owr_media_source_set_codec(OWR_MEDIA_SOURCE(source), OWR_CODEC_TYPE_H264);
     sources = g_list_prepend(sources, source);
+    source = _owr_local_media_source_new_cached(-1, "PulseAudio", OWR_MEDIA_TYPE_AUDIO, OWR_SOURCE_TYPE_CAPTURE, OWR_MEDIA_SOURCE_SUPPORTS_NONE);
+    sources = g_list_prepend(sources, source);
 #endif
 
     dev_dir = g_dir_open("/dev", 0, &error);

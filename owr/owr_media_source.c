@@ -131,6 +131,8 @@ static void owr_media_source_get_property(GObject *object, guint property_id,
     GValue *value, GParamSpec *pspec);
 
 static GstElement *owr_media_source_request_source_default(OwrMediaSource *media_source, GstCaps *caps);
+static GstElement *owr_media_source_request_source_default_new(OwrMediaSource *media_source, GstCaps *caps);
+static GstElement *owr_media_source_request_source_default_legacy(OwrMediaSource *media_source, GstCaps *caps);
 static void owr_media_source_release_source_default(OwrMediaSource *media_source, GstElement *source);
 
 static void owr_media_source_finalize(GObject *object)
@@ -263,6 +265,188 @@ static void owr_media_source_get_property(GObject *object, guint property_id,
  *
  */
 static GstElement *owr_media_source_request_source_default(OwrMediaSource *media_source, GstCaps *caps)
+{
+    if (media_source->priv->media_type == OWR_MEDIA_TYPE_VIDEO) {
+        g_message("Source request for video type, using new code pathway.");
+        return owr_media_source_request_source_default_new(media_source, caps);
+    } else {
+        g_message("Source request for other type, using old code pathway.");
+        return owr_media_source_request_source_default_legacy(media_source, caps);
+    }
+}
+
+static GstElement *owr_media_source_request_source_default_legacy(OwrMediaSource *media_source, GstCaps *caps)
+{
+    OwrMediaType media_type;
+    GstElement *source_pipeline, *tee;
+    GstElement *source_bin, *source = NULL, *queue_pre, *queue_post;
+    GstElement *capsfilter;
+    GstElement *sink, *sink_queue, *sink_bin;
+    GstPad *bin_pad = NULL, *srcpad, *sinkpad;
+    gchar *bin_name;
+    guint source_id;
+    gchar *sink_name, *source_name;
+
+    g_return_val_if_fail(media_source->priv->source_bin, NULL);
+    g_return_val_if_fail(media_source->priv->source_tee, NULL);
+
+    source_pipeline = gst_object_ref(media_source->priv->source_bin);
+    tee = gst_object_ref(media_source->priv->source_tee);
+
+    source_id = g_atomic_int_add(&unique_bin_id, 1);
+
+    bin_name = g_strdup_printf("source-bin-%u", source_id);
+    source_bin = gst_bin_new(bin_name);
+    g_free(bin_name);
+
+    CREATE_ELEMENT_WITH_ID(queue_pre, "queue", "source-queue", source_id);
+
+    CREATE_ELEMENT_WITH_ID(sink_queue, "queue", "sink-queue", source_id);
+
+    gst_bin_add(GST_BIN(source_bin), queue_pre);
+    g_object_get(media_source, "media-type", &media_type, NULL);
+
+    switch (media_type) {
+    case OWR_MEDIA_TYPE_AUDIO:
+        {
+        GstElement *audioresample, *audioconvert;
+
+        CREATE_ELEMENT_WITH_ID(capsfilter, "capsfilter", "source-output-capsfilter", source_id);
+        CREATE_ELEMENT_WITH_ID(queue_post, "queue", "source-output-queue", source_id);
+        g_object_set(capsfilter, "caps", caps, NULL);
+
+        CREATE_ELEMENT_WITH_ID(audioresample, "audioresample", "source-audio-resample", source_id);
+        CREATE_ELEMENT_WITH_ID(audioconvert, "audioconvert", "source-audio-convert", source_id);
+
+        gst_bin_add_many(GST_BIN(source_bin), queue_pre, audioconvert, audioresample, capsfilter,
+                         queue_post, NULL);
+        LINK_ELEMENTS(queue_pre, audioconvert);
+        LINK_ELEMENTS(audioconvert, audioresample);
+        LINK_ELEMENTS(audioresample, capsfilter);
+        LINK_ELEMENTS(capsfilter, queue_post);
+
+        srcpad = gst_element_get_static_pad(queue_post, "src");
+
+        break;
+        }
+    case OWR_MEDIA_TYPE_VIDEO:
+        {
+
+#if !TARGET_RPI
+        CREATE_ELEMENT_WITH_ID(capsfilter, "capsfilter", "source-output-capsfilter", source_id);
+        CREATE_ELEMENT_WITH_ID(queue_post, "queue", "source-output-queue", source_id);
+        g_object_set(capsfilter, "caps", caps, NULL);
+        GstElement *videorate = NULL, *videoscale = NULL, *videoconvert;
+        GstStructure *s;
+        GstCapsFeatures *features;
+
+        s = gst_caps_get_structure(caps, 0);
+        if (gst_structure_has_field(s, "framerate")) {
+            gint fps_n = 0, fps_d = 0;
+
+            gst_structure_get_fraction(s, "framerate", &fps_n, &fps_d);
+            g_assert(fps_d);
+
+            CREATE_ELEMENT_WITH_ID(videorate, "videorate", "source-video-rate", source_id);
+            g_object_set(videorate, "drop-only", TRUE, "max-rate", fps_n / fps_d, NULL);
+
+            gst_structure_remove_field(s, "framerate");
+            gst_bin_add(GST_BIN(source_bin), videorate);
+        }
+
+        features = gst_caps_get_features(caps, 0);
+        GstElement *glload;
+        if (gst_caps_features_contains(features, GST_CAPS_FEATURE_MEMORY_GL_MEMORY)) {
+            CREATE_ELEMENT_WITH_ID(glload, "glupload", "source-glupload", source_id);
+            CREATE_ELEMENT_WITH_ID(videoconvert, "glcolorconvert", "source-glcolorconvert", source_id);
+            gst_bin_add_many(GST_BIN(source_bin),
+                             glload, videoconvert, NULL);
+
+            if (videorate) {
+                LINK_ELEMENTS(queue_pre, videorate);
+                LINK_ELEMENTS(videorate, glload);
+            } else {
+                LINK_ELEMENTS(queue_pre, glload);
+            }
+            LINK_ELEMENTS(glload, videoconvert);
+        } else {
+            CREATE_ELEMENT_WITH_ID(glload, "gldownload", "source-gldownload", source_id);
+            CREATE_ELEMENT_WITH_ID(videoscale,  "videoscale", "source-video-scale", source_id);
+            CREATE_ELEMENT_WITH_ID(videoconvert, VIDEO_CONVERT, "source-video-convert", source_id);
+            gst_bin_add_many(GST_BIN(source_bin),
+                             glload, videoscale, videoconvert, NULL);
+            if (videorate) {
+                LINK_ELEMENTS(queue_pre, videorate);
+                LINK_ELEMENTS(videorate, glload);
+            } else {
+                LINK_ELEMENTS(queue_pre, glload);
+            }
+            LINK_ELEMENTS(glload, videoscale);
+            LINK_ELEMENTS(videoscale, videoconvert);
+        }
+        LINK_ELEMENTS(videoconvert, capsfilter);
+        LINK_ELEMENTS(capsfilter, queue_post);
+        srcpad = gst_element_get_static_pad(queue_post, "src");
+#else
+        srcpad = gst_element_get_static_pad(queue_pre, "src");
+#endif
+        break;
+        }
+    case OWR_MEDIA_TYPE_UNKNOWN:
+    default:
+        g_assert_not_reached();
+        goto done;
+    }
+
+    source_name = g_strdup_printf("source-%u", source_id);
+    source = g_object_new(OWR_TYPE_INTER_SRC, "name", source_name, NULL);
+    g_free(source_name);
+
+    sink_name = g_strdup_printf("sink-%u", source_id);
+    sink = g_object_new(OWR_TYPE_INTER_SINK, "name", sink_name, NULL);
+    g_free(sink_name);
+
+    g_weak_ref_set(&OWR_INTER_SRC(source)->sink_sinkpad, OWR_INTER_SINK(sink)->sinkpad);
+    g_weak_ref_set(&OWR_INTER_SINK(sink)->src_srcpad, OWR_INTER_SRC(source)->internal_srcpad);
+
+    /* Add and link the inter*sink to the actual source pipeline */
+    bin_name = g_strdup_printf("source-sink-bin-%u", source_id);
+    sink_bin = gst_bin_new(bin_name);
+    g_free(bin_name);
+    gst_bin_add_many(GST_BIN(sink_bin), sink, sink_queue, NULL);
+    gst_element_sync_state_with_parent(sink);
+    gst_element_sync_state_with_parent(sink_queue);
+    LINK_ELEMENTS(sink_queue, sink);
+    sinkpad = gst_element_get_static_pad(sink_queue, "sink");
+    bin_pad = gst_ghost_pad_new("sink", sinkpad);
+    gst_object_unref(sinkpad);
+    gst_pad_set_active(bin_pad, TRUE);
+    gst_element_add_pad(sink_bin, bin_pad);
+    bin_pad = NULL;
+    gst_bin_add(GST_BIN(source_pipeline), sink_bin);
+    gst_element_sync_state_with_parent(sink_bin);
+    LINK_ELEMENTS(tee, sink_bin);
+
+    /* Start up our new bin and link it all */
+    g_assert(srcpad);
+
+    bin_pad = gst_ghost_pad_new("src", srcpad);
+    gst_object_unref(srcpad);
+    gst_pad_set_active(bin_pad, TRUE);
+    gst_element_add_pad(source_bin, bin_pad);
+
+    gst_bin_add(GST_BIN(source_bin), source);
+    LINK_ELEMENTS(source, queue_pre);
+
+done:
+
+    gst_object_unref(source_pipeline);
+    gst_object_unref(tee);
+
+    return source_bin;
+}
+
+static GstElement *owr_media_source_request_source_default_new(OwrMediaSource *media_source, GstCaps *caps)
 {
     GstElement *source_pipeline, *tee;
     GstElement *source_bin, *source = NULL, *queue_pre, *queue_post;

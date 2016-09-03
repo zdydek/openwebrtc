@@ -36,19 +36,20 @@
 #include "owr_transport_agent.h"
 #include "owr_video_payload.h"
 #include "owr_video_renderer.h"
+#include "test_utils.h"
 
 #include <gio/gio.h>
 #include <json-glib/json-glib.h>
 #include <libsoup/soup.h>
 #include <string.h>
 
-#define SERVER_URL "http://demo.openwebrtc.org"
+#define SERVER_URL "http://pithree:8080"
 
-#define ENABLE_PCMA TRUE
-#define ENABLE_PCMU TRUE
+#define ENABLE_PCMA FALSE
+#define ENABLE_PCMU FALSE
 #define ENABLE_OPUS TRUE
 #define ENABLE_H264 TRUE
-#define ENABLE_VP8  TRUE
+#define ENABLE_VP8  FALSE
 
 static GList *local_sources, *renderers;
 static OwrTransportAgent *transport_agent;
@@ -291,6 +292,7 @@ static void send_answer()
     json_generator_set_root(generator, root);
     json = json_generator_to_data(generator, &json_length);
     json_node_free(root);
+    g_message("Sending answer: %s", json);
     g_object_unref(builder);
     g_object_unref(generator);
 
@@ -646,18 +648,26 @@ static void handle_remote_candidate(JsonReader *reader)
 
 static void reset()
 {
-    GList *media_sessions, *item;
+    GList *media_sessions, *item, *list_item;
     OwrMediaRenderer *renderer;
+    OwrMediaSource *source;
     OwrMediaSession *media_session;
 
     if (renderers) {
         for (item = renderers; item; item = item->next) {
             renderer = OWR_MEDIA_RENDERER(item->data);
+            write_dot_file("test_client-reset-renderer", owr_media_renderer_get_dot_data(renderer), TRUE);
             owr_media_renderer_set_source(renderer, NULL);
         }
         g_list_free_full(renderers, g_object_unref);
         renderers = NULL;
     }
+
+    for (list_item = local_sources; list_item; list_item = list_item->next) {
+        source = OWR_MEDIA_SOURCE(list_item->data);
+        write_dot_file("test_client-reset-local_source", owr_media_source_get_dot_data(source), TRUE);
+    }
+
     if (transport_agent) {
         media_sessions = g_object_steal_data(G_OBJECT(transport_agent), "media-sessions");
         for (item = media_sessions; item; item = item->next) {

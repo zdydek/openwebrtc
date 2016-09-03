@@ -92,6 +92,7 @@ enum {
 
 static GParamSpec *obj_properties[N_PROPERTIES] = {NULL, };
 
+static guint get_unique_id();
 
 static void owr_payload_set_property(GObject *object, guint property_id, const GValue *value, GParamSpec *pspec)
 {
@@ -251,6 +252,7 @@ static void owr_payload_init(OwrPayload *payload)
 /* Private methods */
 
 
+static const gchar *OwrCodecTypeParserElementName[] = {"none", "none", "none", "none", "h264parse", "none"};
 static const gchar *OwrCodecTypePayElementName[] = { NULL, "rtppcmupay", "rtppcmapay", "rtpopuspay", "rtph264pay", "rtpvp8pay" };
 static const gchar *OwrCodecTypeDepayElementName[] = { NULL, "rtppcmudepay", "rtppcmadepay", "rtpopusdepay", "rtph264depay", "rtpvp8depay" };
 
@@ -373,6 +375,30 @@ GstElement * _owr_payload_create_encoder(OwrPayload *payload)
     }
 
     return encoder;
+}
+
+GstElement * _owr_payload_create_parser(OwrPayload *payload)
+{
+    GstElement * parser = NULL;
+    gchar *element_name = NULL;
+
+    g_return_val_if_fail(payload, NULL);
+
+    if (!g_strcmp0(OwrCodecTypeParserElementName[payload->priv->codec_type], "none"))
+        return NULL;
+
+    element_name = g_strdup_printf("parser_%s_%u", OwrCodecTypeParserElementName[payload->priv->codec_type], get_unique_id());
+    parser = gst_element_factory_make(OwrCodecTypeParserElementName[payload->priv->codec_type], element_name);
+    g_free(element_name);
+
+    switch (payload->priv->codec_type) {
+    case OWR_CODEC_TYPE_H264:
+        g_object_set(parser, "disable-passthrough", TRUE, NULL);
+        break;
+    default:
+        break;
+    }
+    return parser;
 }
 
 GstElement * _owr_payload_create_payload_packetizer(OwrPayload *payload)
@@ -599,3 +625,9 @@ GstCaps * _owr_payload_create_encoded_caps(OwrPayload *payload)
 
 
 /* local functions */
+
+static guint get_unique_id()
+{
+    static guint id = 0;
+    return g_atomic_int_add(&id, 1);
+}
