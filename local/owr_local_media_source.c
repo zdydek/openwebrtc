@@ -529,8 +529,8 @@ static GstElement *owr_local_media_source_request_source(OwrMediaSource *media_s
     So let's just stick with the defaults.
 */
 #if !defined(__ANDROID__)
-                g_object_set(source, "buffer-time", G_GINT64_CONSTANT(40000),
-                    "latency-time", G_GINT64_CONSTANT(10000), NULL);
+                g_object_set(source, "buffer-time", G_GINT64_CONSTANT(200000),
+                    "latency-time", G_GINT64_CONSTANT(100000), NULL);
 #endif
                 if (priv->device_index > -1) {
 #ifdef __APPLE__

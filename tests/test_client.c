@@ -474,11 +474,12 @@ static void handle_offer(JsonReader *reader)
         g_object_set_data(session, "media-type", g_strdup(mtype));
         json_reader_end_member(reader);
 
-        json_reader_read_member(reader, "rtcp");
-        json_reader_read_member(reader, "mux");
-        rtcp_mux = json_reader_get_boolean_value(reader);
-        g_object_set(media_session, "rtcp-mux", rtcp_mux, NULL);
-        json_reader_end_member(reader);
+        if (json_reader_read_member(reader, "rtcp")) {
+            json_reader_read_member(reader, "mux");
+            rtcp_mux = json_reader_get_boolean_value(reader);
+            g_object_set(media_session, "rtcp-mux", rtcp_mux, NULL);
+            json_reader_end_member(reader);
+        }
         json_reader_end_member(reader);
 
         json_reader_read_member(reader, "payloads");
@@ -585,8 +586,8 @@ end_payload:
                     g_object_unref(remote_candidate);
                 json_reader_end_element(reader);
             }
-            json_reader_end_member(reader); /* candidates */
         }
+        json_reader_end_member(reader); /* candidates */
         json_reader_end_member(reader); /* ice */
 
         json_reader_end_element(reader);
