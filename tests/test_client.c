@@ -36,14 +36,22 @@
 #include "owr_transport_agent.h"
 #include "owr_video_payload.h"
 #include "owr_video_renderer.h"
-#include "test_utils.h"
+
+#include "owr_session.h"
+#include "owr_data_session.h"
+#include "owr_data_channel.h"
 
 #include <gio/gio.h>
 #include <json-glib/json-glib.h>
 #include <libsoup/soup.h>
 #include <string.h>
 
-#define SERVER_URL "http://pithree:8080"
+#include <stdio.h>
+#include <errno.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+
+#define SERVER_URL "http://localhost:8080"
 
 #define ENABLE_PCMA FALSE
 #define ENABLE_PCMU FALSE
@@ -58,8 +66,18 @@ static guint client_id;
 static gchar *candidate_types[] = { "host", "srflx", "relay", NULL };
 static gchar *tcp_types[] = { "", "active", "passive", "so", NULL };
 
+static int rosbridge_client_socket;
+static const char *rosbridge_client_socket_address = "/tmp/uv4l.socket";
+static gboolean rosbridge_client_socket_opened = FALSE;
+
 static void read_eventstream_line(GDataInputStream *input_stream, gpointer user_data);
 static void got_local_sources(GList *sources, gchar *url);
+
+static void on_data_channel_requested(OwrDataSession *session, gboolean ordered,
+    gint max_packet_life_time, gint max_retransmits, const gchar *protocol,
+    gboolean negotiated, guint16 id, const gchar *label);
+static void setupChat();
+static void on_data(OwrDataChannel *data_channel, const gchar *string);
 
 static void got_remote_source(OwrMediaSession *media_session, OwrMediaSource *source,
     gpointer user_data)
@@ -146,6 +164,7 @@ static void send_answer()
 
     media_sessions = g_object_get_data(G_OBJECT(transport_agent), "media-sessions");
     for (item = media_sessions; item; item = item->next) {
+        g_print("a\n");
         media_session = G_OBJECT(item->data);
         json_builder_begin_object(builder);
 
@@ -153,58 +172,78 @@ static void send_answer()
         media_type = g_object_steal_data(media_session, "media-type");
         json_builder_add_string_value(builder, media_type);
 
-        json_builder_set_member_name(builder, "rtcp");
-        json_builder_begin_object(builder);
-        json_builder_set_member_name(builder, "mux");
-        g_object_get(media_session, "rtcp-mux", &rtcp_mux, NULL);
-        json_builder_add_boolean_value(builder, rtcp_mux);
-        json_builder_end_object(builder);
+        g_print("b\n");
+        if (!g_strcmp0(media_type, "application")) {
+            g_print("c\n");
+            json_builder_set_member_name(builder, "protocol");
+            json_builder_add_string_value(builder, "DTLS/SCTP");
+            json_builder_set_member_name(builder, "sctp");
+            json_builder_begin_object(builder);
+            json_builder_set_member_name(builder, "port");
+            json_builder_add_int_value(builder, 5000);
+            json_builder_set_member_name(builder, "app");
+            json_builder_add_string_value(builder, "webrtc-datachannel");
+            json_builder_set_member_name(builder, "streams");
+            json_builder_add_int_value(builder, 1024);
+            json_builder_end_object(builder);
+            g_print("d\n");
+        } else { /* media_type == application */
+            g_print("1\n");
+            json_builder_set_member_name(builder, "rtcp");
+            json_builder_begin_object(builder);
+            json_builder_set_member_name(builder, "mux");
+            g_object_get(media_session, "rtcp-mux", &rtcp_mux, NULL);
+            json_builder_add_boolean_value(builder, rtcp_mux);
+            json_builder_end_object(builder);
 
-        json_builder_set_member_name(builder, "payloads");
-        json_builder_begin_array(builder);
+            json_builder_set_member_name(builder, "payloads");
+            json_builder_begin_array(builder);
 
-        json_builder_begin_object(builder);
-        json_builder_set_member_name(builder, "encodingName");
-        encoding_name = g_object_steal_data(media_session, "encoding-name");
-        json_builder_add_string_value(builder, encoding_name);
+            json_builder_begin_object(builder);
+            json_builder_set_member_name(builder, "encodingName");
+            encoding_name = g_object_steal_data(media_session, "encoding-name");
+            json_builder_add_string_value(builder, encoding_name);
 
-        json_builder_set_member_name(builder, "type");
-        payload_type = GPOINTER_TO_UINT(g_object_steal_data(media_session, "payload-type"));
-        json_builder_add_int_value(builder, payload_type);
+            json_builder_set_member_name(builder, "type");
+            payload_type = GPOINTER_TO_UINT(g_object_steal_data(media_session, "payload-type"));
+            json_builder_add_int_value(builder, payload_type);
 
-        json_builder_set_member_name(builder, "clockRate");
-        clock_rate = GPOINTER_TO_UINT(g_object_steal_data(media_session, "clock-rate"));
-        json_builder_add_int_value(builder, clock_rate);
+            json_builder_set_member_name(builder, "clockRate");
+            clock_rate = GPOINTER_TO_UINT(g_object_steal_data(media_session, "clock-rate"));
+            json_builder_add_int_value(builder, clock_rate);
 
-        if (!g_strcmp0(media_type, "audio")) {
-            json_builder_set_member_name(builder, "channels");
-            channels = GPOINTER_TO_UINT(g_object_steal_data(media_session, "channels"));
-            json_builder_add_int_value(builder, channels);
-        } else if (!g_strcmp0(media_type, "video")) {
-            json_builder_set_member_name(builder, "ccmfir");
-            ccm_fir = GPOINTER_TO_UINT(g_object_steal_data(media_session, "ccm-fir"));
-            json_builder_add_boolean_value(builder, ccm_fir);
-            json_builder_set_member_name(builder, "nackpli");
-            nack_pli = GPOINTER_TO_UINT(g_object_steal_data(media_session, "nack-pli"));
-            json_builder_add_boolean_value(builder, nack_pli);
+            if (!g_strcmp0(media_type, "audio")) {
+                json_builder_set_member_name(builder, "channels");
+                channels = GPOINTER_TO_UINT(g_object_steal_data(media_session, "channels"));
+                json_builder_add_int_value(builder, channels);
+            } else if (!g_strcmp0(media_type, "video")) {
+                json_builder_set_member_name(builder, "ccmfir");
+                ccm_fir = GPOINTER_TO_UINT(g_object_steal_data(media_session, "ccm-fir"));
+                json_builder_add_boolean_value(builder, ccm_fir);
+                json_builder_set_member_name(builder, "nackpli");
+                nack_pli = GPOINTER_TO_UINT(g_object_steal_data(media_session, "nack-pli"));
+                json_builder_add_boolean_value(builder, nack_pli);
 
-            if (!g_strcmp0(encoding_name, "H264")) {
-                json_builder_set_member_name(builder, "parameters");
-                json_builder_begin_object(builder);
-                json_builder_set_member_name(builder, "levelAsymmetryAllowed");
-                json_builder_add_int_value(builder, 1);
-                json_builder_set_member_name(builder, "packetizationMode");
-                json_builder_add_int_value(builder, 1);
-                json_builder_set_member_name(builder, "profileLevelId");
-                json_builder_add_string_value(builder, "42e01f");
-                json_builder_end_object(builder);
-            }
-        } else
-            g_warn_if_reached();
+                if (!g_strcmp0(encoding_name, "H264")) {
+                    json_builder_set_member_name(builder, "parameters");
+                    json_builder_begin_object(builder);
+                    json_builder_set_member_name(builder, "levelAsymmetryAllowed");
+                    json_builder_add_int_value(builder, 1);
+                    json_builder_set_member_name(builder, "packetizationMode");
+                    json_builder_add_int_value(builder, 1);
+                    json_builder_set_member_name(builder, "profileLevelId");
+                    json_builder_add_string_value(builder, "42e01f");
+                    json_builder_end_object(builder);
+                }
+            } else
+                g_warn_if_reached();
 
-        json_builder_end_object(builder);
-        json_builder_end_array(builder); /* payloads */
+            json_builder_end_object(builder);
+            json_builder_end_array(builder); /* payloads */
+            g_free(encoding_name);
+        } /* media_type != application */
 
+        g_print("e\n");
         json_builder_set_member_name(builder, "ice");
         json_builder_begin_object(builder);
         candidates = g_object_steal_data(media_session, "local-candidates");
@@ -280,7 +319,6 @@ static void send_answer()
         g_free(fingerprint);
         g_free(ice_password);
         g_free(ice_ufrag);
-        g_free(encoding_name);
         g_free(media_type);
     }
     json_builder_end_array(builder); /* mediaDescriptions */
@@ -292,7 +330,6 @@ static void send_answer()
     json_generator_set_root(generator, root);
     json = json_generator_to_data(generator, &json_length);
     json_node_free(root);
-    g_message("Sending answer: %s", json);
     g_object_unref(builder);
     g_object_unref(generator);
 
@@ -321,7 +358,14 @@ static void candidate_gathering_done(GObject *media_session, gpointer user_data)
     g_return_if_fail(!user_data);
     g_object_set_data(media_session, "gathering-done", GUINT_TO_POINTER(1));
     if (can_send_answer())
+    {
         send_answer();
+
+        if (OWR_IS_DATA_SESSION(media_session))
+        {
+            setupChat(media_session);
+        }
+    }
 }
 
 static void got_dtls_certificate(GObject *media_session, GParamSpec *pspec, gpointer user_data)
@@ -445,8 +489,9 @@ static void handle_offer(JsonReader *reader)
     gint i, number_of_media_descriptions;
     const gchar *mtype;
     OwrMediaType media_type = OWR_MEDIA_TYPE_UNKNOWN;
-    gboolean rtcp_mux;
-    OwrMediaSession *media_session;
+    gboolean rtcp_mux = FALSE;
+    OwrMediaSession *media_session = NULL;
+    OwrDataSession *data_session = NULL;
     GObject *session;
     gint j, number_of_payloads, number_of_candidates;
     gint64 payload_type, clock_rate, channels = 0;
@@ -464,17 +509,30 @@ static void handle_offer(JsonReader *reader)
 
     json_reader_read_member(reader, "mediaDescriptions");
     number_of_media_descriptions = json_reader_count_elements(reader);
+    g_print("number_of_media_descriptions=%d\n", number_of_media_descriptions);
     for (i = 0; i < number_of_media_descriptions; i++) {
         json_reader_read_element(reader, i);
-        media_session = owr_media_session_new(TRUE);
-        session = G_OBJECT(media_session);
 
         json_reader_read_member(reader, "type");
         mtype = json_reader_get_string_value(reader);
+        g_print("type=%s\n", mtype);
+        
+
+        if (!g_strcmp0(mtype, "application"))
+        {   
+            data_session = owr_data_session_new(TRUE);
+            session = G_OBJECT(data_session);
+        } else
+        {   
+            media_session = owr_media_session_new(TRUE);
+            session = G_OBJECT(media_session);
+        }
+
         g_object_set_data(session, "media-type", g_strdup(mtype));
         json_reader_end_member(reader);
 
-        if (json_reader_read_member(reader, "rtcp")) {
+        if (json_reader_read_member(reader, "rtcp") && media_session)
+        {
             json_reader_read_member(reader, "mux");
             rtcp_mux = json_reader_get_boolean_value(reader);
             g_object_set(media_session, "rtcp-mux", rtcp_mux, NULL);
@@ -484,6 +542,7 @@ static void handle_offer(JsonReader *reader)
 
         json_reader_read_member(reader, "payloads");
         number_of_payloads = json_reader_count_elements(reader);
+        g_print("number_of_payloads=%d\n", number_of_payloads);
         codec_type = OWR_CODEC_TYPE_NONE;
         for (j = 0; j < number_of_payloads && codec_type == OWR_CODEC_TYPE_NONE; j++) {
             json_reader_read_element(reader, j);
@@ -491,6 +550,7 @@ static void handle_offer(JsonReader *reader)
             json_reader_read_member(reader, "encodingName");
             encoding_name = g_ascii_strup(json_reader_get_string_value(reader), -1);
             json_reader_end_member(reader);
+            g_print("encodingName=%s\n", encoding_name);
 
             json_reader_read_member(reader, "type");
             payload_type = json_reader_get_int_value(reader);
@@ -509,8 +569,9 @@ static void handle_offer(JsonReader *reader)
                     codec_type = OWR_CODEC_TYPE_PCMU;
                 else if (ENABLE_OPUS && !g_strcmp0(encoding_name, "OPUS"))
                     codec_type = OWR_CODEC_TYPE_OPUS;
-                else
+                else {
                     goto end_payload;
+                }
 
                 json_reader_read_member(reader, "channels");
                 channels = json_reader_get_int_value(reader);
@@ -544,6 +605,7 @@ static void handle_offer(JsonReader *reader)
                 g_warn_if_reached();
 
             if (send_payload && receive_payload) {
+                g_print("send and receive happening\n");
                 g_object_set_data(session, "encoding-name", g_strdup(encoding_name));
                 g_object_set_data(session, "payload-type", GUINT_TO_POINTER(payload_type));
                 g_object_set_data(session, "clock-rate", GUINT_TO_POINTER(clock_rate));
@@ -560,7 +622,9 @@ static void handle_offer(JsonReader *reader)
             }
 end_payload:
             g_free(encoding_name);
+            g_print("payload element is object=%d\n", json_reader_is_object(reader));
             json_reader_end_element(reader);
+            g_print("payloads is array=%d\n", json_reader_is_array(reader));
         }
         json_reader_end_member(reader); /* payloads */
 
@@ -581,9 +645,17 @@ end_payload:
                 g_object_set(remote_candidate, "ufrag", ice_ufrag, "password", ice_password, NULL);
                 g_object_get(remote_candidate, "component-type", &component_type, NULL);
                 if (!rtcp_mux || component_type != OWR_COMPONENT_TYPE_RTCP)
-                    owr_session_add_remote_candidate(OWR_SESSION(media_session), remote_candidate);
+                    if (!g_strcmp0(mtype, "application"))
+                    {
+                        owr_session_add_remote_candidate(OWR_SESSION(data_session), remote_candidate);
+                    } else
+                    {
+                        owr_session_add_remote_candidate(OWR_SESSION(media_session), remote_candidate);
+                    }
                 else
+                {
                     g_object_unref(remote_candidate);
+                }
                 json_reader_end_element(reader);
             }
         }
@@ -592,12 +664,23 @@ end_payload:
 
         json_reader_end_element(reader);
 
-        g_signal_connect(media_session, "on-incoming-source", G_CALLBACK(got_remote_source), NULL);
-        g_signal_connect(media_session, "on-new-candidate", G_CALLBACK(got_candidate), NULL);
-        g_signal_connect(media_session, "on-candidate-gathering-done",
-            G_CALLBACK(candidate_gathering_done), NULL);
-        g_signal_connect(media_session, "notify::dtls-certificate",
-            G_CALLBACK(got_dtls_certificate), NULL);
+        if (!g_strcmp0(mtype, "application"))
+        {  
+            g_object_set(data_session, "sctp-local-port", 5000, "sctp-remote-port", 5000, NULL); 
+            g_signal_connect(data_session, "on-new-candidate", G_CALLBACK(got_candidate), NULL);
+            g_signal_connect(data_session, "on-candidate-gathering-done",
+                G_CALLBACK(candidate_gathering_done), NULL);
+            g_signal_connect(data_session, "notify::dtls-certificate",
+                G_CALLBACK(got_dtls_certificate), NULL);
+        } else
+        {
+            g_signal_connect(media_session, "on-incoming-source", G_CALLBACK(got_remote_source), NULL);
+            g_signal_connect(media_session, "on-new-candidate", G_CALLBACK(got_candidate), NULL);
+            g_signal_connect(media_session, "on-candidate-gathering-done",
+                G_CALLBACK(candidate_gathering_done), NULL);
+            g_signal_connect(media_session, "notify::dtls-certificate",
+                G_CALLBACK(got_dtls_certificate), NULL);
+        }
 
         for (list_item = local_sources; list_item; list_item = list_item->next) {
             source = OWR_MEDIA_SOURCE(list_item->data);
@@ -609,9 +692,17 @@ end_payload:
             }
         }
         media_sessions = g_object_get_data(G_OBJECT(transport_agent), "media-sessions");
-        media_sessions = g_list_append(media_sessions, media_session);
+        if (!g_strcmp0(mtype, "application"))
+        {
+            g_print("Adding data_session to media_sessions\n");
+            media_sessions = g_list_append(media_sessions, data_session);
+            owr_transport_agent_add_session(transport_agent, OWR_SESSION(data_session));
+        } else
+        {
+            media_sessions = g_list_append(media_sessions, media_session);
+            owr_transport_agent_add_session(transport_agent, OWR_SESSION(media_session));
+        }
         g_object_set_data(G_OBJECT(transport_agent), "media-sessions", media_sessions);
-        owr_transport_agent_add_session(transport_agent, OWR_SESSION(media_session));
     }
     json_reader_end_member(reader);
 }
@@ -620,16 +711,16 @@ static void handle_remote_candidate(JsonReader *reader)
 {
     gint index;
     GList *media_sessions;
-    OwrMediaSession *media_session;
+    OwrSession *media_session;
     OwrCandidate *remote_candidate;
     OwrComponentType component_type;
-    gboolean rtcp_mux;
-    gchar *ice_ufrag, *ice_password;
+    gboolean rtcp_mux = FALSE;
+    gchar *ice_ufrag, *ice_password, *media_type;
 
     json_reader_read_member(reader, "sdpMLineIndex");
     index = json_reader_get_int_value(reader);
     media_sessions = g_object_get_data(G_OBJECT(transport_agent), "media-sessions");
-    media_session = OWR_MEDIA_SESSION(g_list_nth_data(media_sessions, index));
+    media_session = OWR_SESSION(g_list_nth_data(media_sessions, index));
     json_reader_end_member(reader);
     if (!media_session)
         return;
@@ -641,7 +732,14 @@ static void handle_remote_candidate(JsonReader *reader)
     ice_ufrag = g_object_get_data(G_OBJECT(media_session), "remote-ice-ufrag");
     ice_password = g_object_get_data(G_OBJECT(media_session), "remote-ice-password");
     g_object_set(remote_candidate, "ufrag", ice_ufrag, "password", ice_password, NULL);
-    g_object_get(media_session, "rtcp-mux", &rtcp_mux, NULL);
+
+    media_type = g_object_get_data(G_OBJECT(media_session), "media-type");
+    g_print("media_type=%s\n", media_type);
+    if (!!g_strcmp0(media_type, "application"))
+    {
+        g_object_get(media_session, "rtcp-mux", &rtcp_mux, NULL);
+    }
+
     g_object_get(remote_candidate, "component-type", &component_type, NULL);
     if (!rtcp_mux || component_type != OWR_COMPONENT_TYPE_RTCP)
         owr_session_add_remote_candidate(OWR_SESSION(media_session), remote_candidate);
@@ -649,31 +747,26 @@ static void handle_remote_candidate(JsonReader *reader)
 
 static void reset()
 {
-    GList *media_sessions, *item, *list_item;
+    GList *media_sessions, *item;
     OwrMediaRenderer *renderer;
-    OwrMediaSource *source;
-    OwrMediaSession *media_session;
+    gchar* media_type;
 
     if (renderers) {
         for (item = renderers; item; item = item->next) {
             renderer = OWR_MEDIA_RENDERER(item->data);
-            write_dot_file("test_client-reset-renderer", owr_media_renderer_get_dot_data(renderer), TRUE);
             owr_media_renderer_set_source(renderer, NULL);
         }
         g_list_free_full(renderers, g_object_unref);
         renderers = NULL;
     }
-
-    for (list_item = local_sources; list_item; list_item = list_item->next) {
-        source = OWR_MEDIA_SOURCE(list_item->data);
-        write_dot_file("test_client-reset-local_source", owr_media_source_get_dot_data(source), TRUE);
-    }
-
     if (transport_agent) {
         media_sessions = g_object_steal_data(G_OBJECT(transport_agent), "media-sessions");
         for (item = media_sessions; item; item = item->next) {
-            media_session = OWR_MEDIA_SESSION(item->data);
-            owr_media_session_set_send_source(media_session, NULL);
+            media_type = g_object_steal_data(G_OBJECT(item->data), "media-type");
+            if (g_strcmp0(media_type, "application"))
+            {
+                owr_media_session_set_send_source(OWR_MEDIA_SESSION(item->data), NULL);
+            }
         }
         g_list_free(media_sessions);
         g_object_unref(transport_agent);
@@ -695,6 +788,7 @@ static void eventstream_line_read(GDataInputStream *input_stream, GAsyncResult *
     JsonReader *reader;
 
     line = g_data_input_stream_read_line_finish_utf8(input_stream, result, &line_length, NULL);
+    g_print("line=%s\n", line);
     if (line) {
         if (line_length) {
             if (g_strstr_len(line, MIN(line_length, 6), "event:"))
@@ -781,6 +875,7 @@ static void send_eventsource_request(const gchar *url)
 
 static void got_local_sources(GList *sources, gchar *url)
 {
+    g_print("Got local sources\n");
     local_sources = g_list_copy(sources);
     transport_agent = owr_transport_agent_new(FALSE);
     owr_transport_agent_add_helper_server(transport_agent, OWR_HELPER_SERVER_TYPE_STUN,
@@ -791,6 +886,74 @@ static void got_local_sources(GList *sources, gchar *url)
     }
 }
 
+static void on_data_channel_requested(OwrDataSession *session, gboolean ordered,
+    gint max_packet_life_time, gint max_retransmits, const gchar *protocol,
+    gboolean negotiated, guint16 id, const gchar *label)
+{   
+    OwrDataChannel *data_channel;
+
+    g_print("received data channel request: %s\n", label);
+    data_channel = owr_data_channel_new(ordered, max_packet_life_time, max_retransmits, protocol, negotiated, id, label);
+
+    owr_data_session_add_data_channel(session, data_channel);
+
+    g_signal_connect(data_channel, "on-data", G_CALLBACK(on_data), NULL);
+}
+
+static void setupChat(OwrDataSession *data_session)
+{
+    g_print("Setting up chat!\n");
+    g_signal_connect(data_session, "on-data-channel-requested", G_CALLBACK(on_data_channel_requested), NULL);
+}
+
+static void on_data(OwrDataChannel *data_channel, const gchar *string)
+{
+    int string_length = strlen(string) + 1;
+    int socket_write_length = 0;
+    if (rosbridge_client_socket_opened) {
+      if ((socket_write_length = write(rosbridge_client_socket, string, string_length)) != string_length) {
+        fprintf(stderr, "%s:%d socket_write_length != string_length (%d != %d).\n", __FILE__, __LINE__,
+                socket_write_length, string_length);
+      }
+    } else {
+      fprintf(stderr, "%s:%d rosbridge_client_socket is not open.\n", __FILE__, __LINE__);
+    }
+
+    //g_print("%s\n", string);
+    //gchar * return_message = g_strconcat("Generic response to ", string, "!", NULL);
+    //owr_data_channel_send(data_channel, return_message);
+    //g_free(return_message);
+}
+
+static gboolean connect_rosbridge_client_socket()
+{
+  rosbridge_client_socket_opened = FALSE;
+
+  rosbridge_client_socket = socket(AF_LOCAL, SOCK_SEQPACKET, 0);
+  if(rosbridge_client_socket >= 0) {
+    fprintf(stdout, "%s:%d socket created.\n", __FILE__, __LINE__);
+  } else {
+    fprintf(stderr, "%s:%d socket creation failed: %s.\n", __FILE__, __LINE__, strerror(errno));
+    return FALSE;
+  }
+
+  struct sockaddr_un servaddr;
+  servaddr.sun_family = AF_LOCAL;
+  strncpy (servaddr.sun_path, rosbridge_client_socket_address, sizeof (servaddr.sun_path));
+  servaddr.sun_path[sizeof (servaddr.sun_path) - 1] = '\0';
+
+  if (connect (rosbridge_client_socket, (struct sockaddr *) &servaddr, SUN_LEN(&servaddr)) < 0) {
+    fprintf(stderr, "%s:%d socket connect to address '%s' failed: %s.\n", __FILE__, __LINE__,
+            rosbridge_client_socket_address, strerror(errno));
+    return FALSE;
+  } else {
+    fprintf(stdout, "%s:%d socket connected to address: %s.\n", __FILE__, __LINE__, rosbridge_client_socket_address);
+  }
+
+  rosbridge_client_socket_opened = TRUE;
+  return TRUE;
+}
+
 gint main(gint argc, gchar **argv)
 {
     gchar *url;
@@ -798,6 +961,11 @@ gint main(gint argc, gchar **argv)
     if (argc < 2) {
         g_print("Usage: %s <session id>\n", argv[0]);
         return -1;
+    }
+
+    if (!connect_rosbridge_client_socket()) {
+      fprintf(stderr, "%s:%d Cannot connect to rosbridge_socket: %s.\n", __FILE__, __LINE__, rosbridge_client_socket_address);
+      return -1;
     }
 
     session_id = argv[1];

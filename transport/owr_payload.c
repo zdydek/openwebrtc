@@ -56,7 +56,7 @@ GST_DEBUG_CATEGORY_EXTERN(_owrpayload_debug);
 
 #define LIMITED_WIDTH 640
 #define LIMITED_HEIGHT 480
-#define LIMITED_FRAMERATE 15.0
+#define LIMITED_FRAMERATE 10.0
 
 #define TARGET_BITS_PER_PIXEL 0.1 /* 640x360 15fps @ 768kbps =~ 0.2bpp */
 
