@@ -33,12 +33,12 @@
 #define __OWR_MEDIA_RENDERER_PRIVATE_H__
 
 #include "owr_media_renderer.h"
+#include <gst/gst.h>
 
 G_BEGIN_DECLS
 
 void _owr_media_renderer_set_sink(OwrMediaRenderer *renderer, gpointer sink);
-OwrMediaSource* _owr_media_renderer_get_source(OwrMediaRenderer *renderer);
-void _owr_media_renderer_reconfigure_element(OwrMediaRenderer *renderer);
+GstPipeline * _owr_media_renderer_get_pipeline(OwrMediaRenderer *renderer);
 
 G_END_DECLS
 
