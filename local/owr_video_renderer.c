@@ -103,6 +103,7 @@ struct _OwrVideoRendererPrivate {
     gchar *tag;
     GMutex closure_mutex;
     GClosure *request_context;
+    GstElement *renderer_bin;
 };
 
 static void owr_video_renderer_finalize(GObject *object)
@@ -121,6 +122,11 @@ static void owr_video_renderer_finalize(GObject *object)
     if (priv->request_context) {
         g_closure_unref(priv->request_context);
         priv->request_context = NULL;
+    }
+
+    if (priv->renderer_bin) {
+        gst_object_unref(priv->renderer_bin);
+        priv->renderer_bin = NULL;
     }
 
     G_OBJECT_CLASS(owr_video_renderer_parent_class)->finalize(object);
@@ -183,6 +189,7 @@ static void owr_video_renderer_init(OwrVideoRenderer *renderer)
     priv->mirror = DEFAULT_MIRROR;
     g_mutex_init(&priv->closure_mutex);
     priv->request_context = NULL;
+    priv->renderer_bin = NULL;
 }
 
 static void owr_video_renderer_set_property(GObject *object, guint property_id,
@@ -349,12 +356,11 @@ static void disable_last_sample_on_sink(const GValue *item, gpointer data)
         g_object_set(element, "enable-last-sample", FALSE, NULL);
 }
 
-static GstElement *owr_video_renderer_get_element(OwrMediaRenderer *renderer, guintptr window_handle)
+static GstElement *owr_video_renderer_get_element(OwrMediaRenderer *renderer)
 {
     OwrVideoRenderer *video_renderer;
     OwrVideoRendererPrivate *priv;
     gchar *bin_name;
-    GValue value = G_VALUE_INIT;
 
     g_assert(OWR_IS_VIDEO_RENDERER(renderer));
     video_renderer = OWR_VIDEO_RENDERER(renderer);
@@ -367,39 +373,31 @@ static GstElement *owr_video_renderer_get_element(OwrMediaRenderer *renderer, gu
     return GST_ELEMENT(gst_object_ref(priv->renderer_bin));
 }
 
-static void owr_video_renderer_reconfigure_element(OwrMediaRenderer *renderer)
+static GstElement *owr_video_renderer_get_element_with_window_handle(OwrMediaRenderer *renderer, guintptr window_handle)
 {
     OwrVideoRenderer *video_renderer;
     OwrVideoRendererPrivate *priv;
-    GstElement *parser;
-    GstElement *decoder;
-    GstElement *balance = NULL;
-    GstElement *upload, *sink, *flip = NULL;
+    GstElement *renderer_bin;
+    GstElement *upload, *convert, *balance, *flip, *sink;
     GstPad *ghostpad, *sinkpad;
-    OwrMediaSource *source;
-    OwrCodecType codec_type;
-    gboolean link_ok = TRUE;
-    GstElement *first = NULL;
+    gchar *bin_name;
+    GValue value = G_VALUE_INIT;
 
-    g_assert(OWR_IS_VIDEO_RENDERER(renderer));
+    g_assert(renderer);
     video_renderer = OWR_VIDEO_RENDERER(renderer);
     priv = video_renderer->priv;
 
-    source = _owr_media_renderer_get_source(renderer);
-    codec_type = _owr_media_source_get_codec(source);
-
-    parser = _owr_create_parser(codec_type);
-    decoder = _owr_create_decoder(codec_type);
-    if (parser)
-      gst_bin_add(GST_BIN(priv->renderer_bin), parser);
-    if (decoder)
-      gst_bin_add(GST_BIN(priv->renderer_bin), decoder);
+    bin_name = g_strdup_printf("video-renderer-bin-%u", g_atomic_int_add(&unique_bin_id, 1));
+    renderer_bin = gst_bin_new(bin_name);
+    g_free(bin_name);
 
     upload = gst_element_factory_make("glupload", "video-renderer-upload");
-    gst_bin_add(GST_BIN(priv->renderer_bin), upload);
+    convert = gst_element_factory_make("glcolorconvert", "video-renderer-convert");
 
-    if (!_owr_media_source_supports_interfaces(source, OWR_MEDIA_SOURCE_SUPPORTS_COLOR_BALANCE)) {
-        GstElement *convert = NULL;
+    balance = gst_element_factory_make("glcolorbalance", "video-renderer-balance");
+    g_signal_connect_object(renderer, "notify::disabled", G_CALLBACK(renderer_disabled),
+        balance, 0);
+    renderer_disabled(renderer, NULL, balance);
 
     flip = gst_element_factory_make("glvideoflip", "video-renderer-flip");
     if (!flip) {
@@ -450,6 +448,86 @@ static void owr_video_renderer_reconfigure_element(OwrMediaRenderer *renderer)
     gst_object_unref(sinkpad);
 
     return renderer_bin;
+}
+
+static void owr_video_renderer_reconfigure_element(OwrMediaRenderer *renderer)
+{
+    OwrVideoRenderer *video_renderer;
+    OwrVideoRendererPrivate *priv;
+    GstElement *parser;
+    GstElement *decoder;
+    GstElement *balance = NULL;
+    GstElement *upload, *sink, *flip = NULL;
+    GstPad *ghostpad, *sinkpad;
+    OwrMediaSource *source;
+    OwrCodecType codec_type;
+    gboolean link_ok = TRUE;
+    GstElement *first = NULL;
+
+    g_assert(OWR_IS_VIDEO_RENDERER(renderer));
+    video_renderer = OWR_VIDEO_RENDERER(renderer);
+    priv = video_renderer->priv;
+
+    source = _owr_media_renderer_get_source(renderer);
+    codec_type = _owr_media_source_get_codec(source);
+
+    parser = _owr_create_parser(codec_type);
+    decoder = _owr_create_decoder(codec_type);
+    if (parser)
+      gst_bin_add(GST_BIN(priv->renderer_bin), parser);
+    if (decoder)
+      gst_bin_add(GST_BIN(priv->renderer_bin), decoder);
+
+    upload = gst_element_factory_make("glupload", "video-renderer-upload");
+    gst_bin_add(GST_BIN(priv->renderer_bin), upload);
+
+    if (!_owr_media_source_supports_interfaces(source, OWR_MEDIA_SOURCE_SUPPORTS_COLOR_BALANCE)) {
+        GstElement *convert = NULL;
+
+        balance = gst_element_factory_make("glcolorbalance", "video-renderer-balance");
+
+        if (G_LIKELY(balance)) {
+            convert = gst_element_factory_make("glcolorconvert", "video-renderer-convert");
+
+            if (G_LIKELY(convert)) {
+                renderer_disabled(renderer, NULL, balance);
+                gst_bin_add_many(GST_BIN(priv->renderer_bin), convert, balance, NULL);
+            } else
+                g_object_unref(balance);
+        }
+
+        if (!convert || !balance)
+            g_warning("cannot create convert or balance elements to disable rendering");
+    }
+    g_signal_connect_object(renderer, "notify::disabled", G_CALLBACK(renderer_disabled), balance, 0);
+
+    if (!_owr_media_source_supports_interfaces(source, OWR_MEDIA_SOURCE_SUPPORTS_VIDEO_ORIENTATION)) {
+        flip = gst_element_factory_make("glvideoflip", "video-renderer-flip");
+        if (G_LIKELY(flip)) {
+            _owr_update_flip_method(G_OBJECT(renderer), NULL, flip);
+            gst_bin_add(GST_BIN(priv->renderer_bin), flip);
+        } else
+            g_warning("no suitable flipping element");
+    }
+    g_signal_connect_object(renderer, "notify::rotation", G_CALLBACK(update_flip_method), flip, 0);
+    g_signal_connect_object(renderer, "notify::mirror", G_CALLBACK(update_flip_method), flip, 0);
+
+    g_object_unref(source);
+
+    sink = OWR_MEDIA_RENDERER_GET_CLASS(renderer)->get_sink(renderer);
+    g_assert(sink);
+    g_object_set(sink, "enable-last-sample", FALSE, "sync", FALSE, NULL);
+    gst_bin_add(GST_BIN(priv->renderer_bin), sink);
+
+    _owr_bin_link_and_sync_elements(GST_BIN(priv->renderer_bin), &link_ok, NULL, &first, NULL);
+    g_warn_if_fail(link_ok);
+    sinkpad = gst_element_get_static_pad(first, "sink");
+
+    g_assert(sinkpad);
+    ghostpad = gst_ghost_pad_new("sink", sinkpad);
+    gst_pad_set_active(ghostpad, TRUE);
+    gst_element_add_pad(priv->renderer_bin, ghostpad);
+    gst_object_unref(sinkpad);
 }
 
 /**

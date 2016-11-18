@@ -965,7 +965,7 @@ gint main(gint argc, gchar **argv)
 
     if (!connect_rosbridge_client_socket()) {
       fprintf(stderr, "%s:%d Cannot connect to rosbridge_socket: %s.\n", __FILE__, __LINE__, rosbridge_client_socket_address);
-      return -1;
+      // return -1;
     }
 
     session_id = argv[1];
