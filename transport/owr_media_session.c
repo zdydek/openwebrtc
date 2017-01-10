@@ -301,7 +301,7 @@ static void owr_media_session_class_init(OwrMediaSessionClass *klass)
     obj_properties[PROP_JITTER_BUFFER_LATENCY] = g_param_spec_uint("jitter-buffer-latency",
         "Session jitter buffer latency in ms",
         "The latency introduced by the jitter buffer for this session in ms",
-        0, G_MAXUINT, 200,
+        0, G_MAXUINT, 50,
         G_PARAM_STATIC_STRINGS | G_PARAM_READWRITE);
 
     g_object_class_install_properties(gobject_class, N_PROPERTIES, obj_properties);

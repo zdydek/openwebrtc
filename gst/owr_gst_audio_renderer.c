@@ -36,7 +36,7 @@
 #include "owr_media_renderer_private.h"
 #include "owr_private.h"
 
-#define DEFAULT_AUDIO_SINK "pulsesink"
+#define DEFAULT_AUDIO_SINK "alsasink"
 
 #define OWR_GST_AUDIO_RENDERER_GET_PRIVATE(obj)    (G_TYPE_INSTANCE_GET_PRIVATE((obj), OWR_GST_TYPE_AUDIO_RENDERER, OwrGstAudioRendererPrivate))
 
@@ -82,7 +82,7 @@ static void owr_gst_audio_renderer_class_init(OwrGstAudioRendererClass *klass)
     g_type_class_add_private(klass, sizeof(OwrGstAudioRendererPrivate));
 
     obj_properties[PROP_SINK] = g_param_spec_object("sink", "sink",
-        "Audio sink to use for rendering (default: pulsesink)", G_TYPE_OBJECT,
+        "Audio sink to use for rendering (default: alsasink)", G_TYPE_OBJECT,
         G_PARAM_CONSTRUCT_ONLY | G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
 
     gobject_class->set_property = owr_gst_audio_renderer_set_property;

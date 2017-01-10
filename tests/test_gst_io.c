@@ -36,7 +36,7 @@
 #include "owr_gst_video_renderer.h"
 #include "owr_gst_media_source.h"
 
-#define CUSTOM_AUDIO_SINK "pulsesink"
+#define CUSTOM_AUDIO_SINK "alsasink"
 #define CUSTOM_VIDEO_SINK "xvimagesink"
 #define CUSTOM_AUDIO_SOURCE "audiotestsrc wave=10"
 #define CUSTOM_VIDEO_SOURCE "videotestsrc ! capsfilter caps=\"video/x-raw, width=(int)1280, height=(int)720\" ! videoscale"

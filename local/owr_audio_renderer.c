@@ -56,7 +56,7 @@ GST_DEBUG_CATEGORY_EXTERN(_owraudiorenderer_debug);
 
 #elif __linux__
 
-#define AUDIO_SINK  "pulsesink"
+#define AUDIO_SINK  "alsasink"
 
 #else
 
